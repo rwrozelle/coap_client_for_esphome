@@ -1,6 +1,6 @@
 """Constants for the CoAP Client integration."""
 
-DOMAIN = "esphome_coap_client"
+DOMAIN = "coap_client_for_esphome"
 DEFAULT_PORT = 5683
 
 CONF_OSCORE = "oscore"
