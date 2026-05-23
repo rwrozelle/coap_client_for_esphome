@@ -1,0 +1,14 @@
+{
+  "domain": "coap_client_for_esphome",
+  "name": "CoAP Client for ESPHome",
+  "codeowners": ["@rwrozelle"],
+  "config_flow": true,
+  "dependencies": ["zeroconf"],
+  "documentation": "https://github.com/rwrozelle/coap_client_for_esphome",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "quality_scale": "bronze",
+  "requirements": ["aiocoap==0.4.17", "cbor2==5.9.0"],
+  "zeroconf": ["_coap._udp.local."],
+  "version": "1.0.0"
+}
