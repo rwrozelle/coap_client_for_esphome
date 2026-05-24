@@ -1,6 +1,6 @@
 # CoAP Client for ESPHome
 
-A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/coap_client_for_esphome) external component. Communication uses the CoAP protocol over Thread (OpenThread) networks, with state updates delivered via CoAP Observe (push) — no polling.
+A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/esphome/tree/coap_server) external component. Communication uses the CoAP protocol over Thread (OpenThread) networks, with state updates delivered via CoAP Observe (push) — no polling.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Your ESPHome device must be on a Thread network and configured with the `coap_se
 
 ```yaml
 external_components:
-  - source: github://rwrozelle/coap_client_for_esphome@main
+  - source: github://rwrozelle/esphome@coap_server
     components: [coap_server]
 
 openthread:
