@@ -1,4 +1,16 @@
 {
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "subscribe_logs": "Subscribe to logs from device"
+        },
+        "data_description": {
+          "subscribe_logs": "Stream log messages from the ESPHome device into the Home Assistant logs panel."
+        }
+      }
+    }
+  },
   "config": {
     "abort": {
       "already_configured": "This device is already configured.",

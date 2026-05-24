@@ -7,8 +7,9 @@ import aiocoap
 import cbor2
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlowWithReload
 from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.core import callback
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .const import (
@@ -18,6 +19,7 @@ from .const import (
     CONF_OSCORE,
     CONF_RECIPIENT_ID,
     CONF_SENDER_ID,
+    CONF_SUBSCRIBE_LOGS,
     DEFAULT_PORT,
     DOMAIN,
 )
@@ -59,6 +61,12 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for CoAP Client."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigFlow) -> OptionsFlowHandler:
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler()
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -191,6 +199,28 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="oscore",
             data_schema=STEP_OSCORE_SCHEMA,
             errors=errors,
+        )
+
+
+class OptionsFlowHandler(OptionsFlowWithReload):
+    """Handle options for CoAP Client."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle options flow."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_SUBSCRIBE_LOGS,
+                        default=self.config_entry.options.get(CONF_SUBSCRIBE_LOGS, False),
+                    ): bool,
+                }
+            ),
         )
 
 

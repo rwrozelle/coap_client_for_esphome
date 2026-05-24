@@ -11,6 +11,9 @@ CONF_RECIPIENT_ID = "recipient_id"
 CONF_ID_CONTEXT = "id_context"
 CONF_OSCORE_SEQ_THRESHOLD = "oscore_seq_threshold"
 
+CONF_SUBSCRIBE_LOGS = "subscribe_logs"
+
+RT_LOG = "esphome.log"
 RT_SENSOR = "esphome.sensor"
 RT_SWITCH = "esphome.switch"
 RT_BINARY_SENSOR = "esphome.binary_sensor"

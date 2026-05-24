@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, RT_ACTION, RT_DEVICE
+from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, RT_ACTION, RT_DEVICE
 from .coordinator import CoapCoordinator
 
 PLATFORMS = [
@@ -39,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: CoapClientConfigEntry) -
         oscore_config=oscore_config,
         oscore_save_callback=_save_oscore_seq_threshold if oscore_config else None,
         entry_id=entry.entry_id,
+        subscribe_logs=entry.options.get(CONF_SUBSCRIBE_LOGS, False),
     )
     try:
         await coordinator.async_setup()

@@ -40,6 +40,7 @@ from .const import (
     RT_BINARY_SENSOR,
     RT_BUTTON,
     RT_DEVICE,
+    RT_LOG,
     RT_LOCK,
     RT_NUMBER,
     RT_SENSOR,
@@ -53,6 +54,14 @@ from .const import (
 )
 
 _OSCORE_SEQ_INTERVAL = 1024
+
+_ESPHOME_TO_PY_LEVEL: dict[int, int] = {
+    1: logging.ERROR,
+    2: logging.WARNING,
+    3: logging.INFO,
+    4: logging.DEBUG,
+    5: logging.DEBUG,
+}
 
 
 class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtils):
@@ -159,12 +168,14 @@ class CoapCoordinator:
         oscore_config: dict[str, str] | None = None,
         oscore_save_callback: Callable[[int], None] | None = None,
         entry_id: str = "",
+        subscribe_logs: bool = False,
     ) -> None:
         """Initialize the CoAP coordinator."""
         self.hass = hass
         self.host = host
         self.port = port
         self._entry_id = entry_id
+        self._subscribe_logs = subscribe_logs
         self.device_info = CoapDeviceInfo()
         self.resources: list[CoapResource] = []
         self._context: aiocoap.Context | None = None
@@ -306,10 +317,15 @@ class CoapCoordinator:
             [r.path for r in observable],
         )
         for resource in observable:
-            task = self.hass.async_create_background_task(
-                self._async_observe(resource),
-                name=f"coap_observe_{self.host}_{resource.path}",
-            )
+            if resource.resource_type == RT_LOG:
+                if not self._subscribe_logs:
+                    continue
+                coro = self._async_observe_logs(resource)
+                name = f"coap_observe_logs_{self.host}"
+            else:
+                coro = self._async_observe(resource)
+                name = f"coap_observe_{self.host}_{resource.path}"
+            task = self.hass.async_create_background_task(coro, name=name)
             self._observe_tasks.append(task)
 
         self._last_server_pong = self.hass.loop.time()
@@ -349,11 +365,14 @@ class CoapCoordinator:
             self._deliver(resource.name, response.payload)
             self._set_available(True)
             if pr.observation is not None:
-                async for obs in pr.observation:
-                    self._deliver(resource.name, obs.payload)
-                _LOGGER.debug(
-                    "Observation stream ended for %s on %s", resource.path, self.host
-                )
+                try:
+                    async for obs in pr.observation:
+                        self._deliver(resource.name, obs.payload)
+                    _LOGGER.debug(
+                        "Observation stream ended for %s on %s", resource.path, self.host
+                    )
+                finally:
+                    pr.observation.cancel()
             else:
                 _LOGGER.debug(
                     "No observation object for %s on %s — not observable",
@@ -370,6 +389,49 @@ class CoapCoordinator:
                 "Observe failed for %s on %s: %s", resource.path, self.host, err
             )
             self._set_available(False)
+
+    async def _async_observe_logs(self, resource: CoapResource) -> None:
+        """Observe the log resource, forwarding entries to the HA logger."""
+        assert self._context is not None
+        device_name = self.device_info.friendly_name or self.device_info.name or self.host
+        _LOGGER.debug("Starting log observation for %s", self.host)
+        try:
+            pr = self._context.request(
+                aiocoap.Message(
+                    mtype=aiocoap.NON,
+                    code=aiocoap.GET,
+                    uri=self._uri(resource.path),
+                    observe=0,
+                )
+            )
+            await pr.response  # initial response is always [] — nothing to forward
+            if pr.observation is not None:
+                try:
+                    async for obs in pr.observation:
+                        self.record_server_pong()
+                        self._forward_logs(device_name, obs.payload)
+                finally:
+                    pr.observation.cancel()
+        except asyncio.CancelledError:
+            _LOGGER.debug("Log observe task cancelled for %s", self.host)
+            raise
+        except (aiocoap.error.Error, OSError) as err:
+            _LOGGER.warning("Log observe failed for %s: %s", self.host, err)
+
+    def _forward_logs(self, device_name: str, payload: bytes) -> None:
+        """Decode a CBOR log notification and emit each entry to the HA logger."""
+        try:
+            entries = cbor2.loads(payload)
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(entries, list):
+            return
+        for entry in entries:
+            if not (isinstance(entry, list) and len(entry) == 4):
+                continue
+            _millis, level, tag, message = entry
+            py_level = _ESPHOME_TO_PY_LEVEL.get(int(level), logging.DEBUG)
+            _LOGGER.log(py_level, "%s: [%s] %s", device_name, tag, message)
 
     async def _async_ping_loop(self) -> None:
         """Periodically ping the server; trigger backoff/reconnect on silence."""
