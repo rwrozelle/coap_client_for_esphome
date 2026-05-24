@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: hassfest
+        name: Home Assistant hassfest
+        language: script
+        entry: scripts/validate-hassfest.sh
+        pass_filenames: false
+        always_run: true
+
+      - id: hacs
+        name: HACS validation
+        language: script
+        entry: scripts/validate-hacs.sh
+        pass_filenames: false
+        always_run: true

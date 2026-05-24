@@ -124,6 +124,7 @@ class CoapDeviceInfo:
     model: str = ""
     ping_interval_s: int = 60
     ping_timeout_s: int = 150
+    ping_retry: int = 1
     areas: list[dict[str, str]] = field(default_factory=list)
     devices: list[dict[str, Any]] = field(default_factory=list)
 
@@ -179,6 +180,7 @@ class CoapCoordinator:
         self._last_server_pong: float = 0.0
         self._last_device_uptime: int | None = None
         self._pings_since_reconnect: int = 0
+        self._consecutive_ping_misses: int = 0
         self._reconnect_task: asyncio.Task | None = None
         self._zeroconf_unsub: Callable[[], None] | None = None
 
@@ -259,6 +261,7 @@ class CoapCoordinator:
                     model=raw.get("model", ""),
                     ping_interval_s=int(raw.get("ping_interval", 60)),
                     ping_timeout_s=int(raw.get("ping_timeout", 150)),
+                    ping_retry=int(raw.get("ping_retry", 1)),
                     areas=raw.get("areas", []),
                     devices=raw.get("devices", []),
                 )
@@ -382,13 +385,18 @@ class CoapCoordinator:
             await asyncio.sleep(interval_s)
             uptime = await self._async_send_ping()
             elapsed = self.hass.loop.time() - self._last_server_pong
+            if uptime is None:
+                self._consecutive_ping_misses += 1
+            else:
+                self._consecutive_ping_misses = 0
             _LOGGER.debug(
-                "Ping cycle %s: uptime=%s pings_since_reconnect=%d last_device_uptime=%s elapsed_since_pong=%.0fs",
+                "Ping cycle %s: uptime=%s pings_since_reconnect=%d last_device_uptime=%s elapsed_since_pong=%.0fs consecutive_misses=%d",
                 self.host,
                 uptime,
                 self._pings_since_reconnect,
                 self._last_device_uptime,
                 elapsed,
+                self._consecutive_ping_misses,
             )
             if uptime is not None:
                 should_reconnect = (
@@ -413,11 +421,11 @@ class CoapCoordinator:
                 if uptime >= 0:
                     self._last_device_uptime = uptime
                 self._pings_since_reconnect += 1
-            if elapsed > timeout_s:
+            if self._consecutive_ping_misses >= self.device_info.ping_retry:
                 _LOGGER.warning(
-                    "CoAP server %s unresponsive for %.0fs, entering backoff",
+                    "CoAP server %s unresponsive after %d consecutive missed pings, entering backoff",
                     self.host,
-                    elapsed,
+                    self._consecutive_ping_misses,
                 )
                 self._set_available(False)
                 self._cancel_observations()
@@ -602,6 +610,7 @@ class CoapCoordinator:
         self._reconnect_task = None
         self._last_device_uptime = None
         self._pings_since_reconnect = 0
+        self._consecutive_ping_misses = 0
         try:
             old_names = self._entity_resource_names()
             _LOGGER.debug("Reconnect: fetching /info for %s", self.host)
