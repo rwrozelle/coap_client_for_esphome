@@ -2,6 +2,7 @@
 
 DOMAIN = "coap_client_for_esphome"
 DEFAULT_PORT = 5683
+DEFAULT_PING_TIMEOUT_S = 150
 
 CONF_OSCORE = "oscore"
 CONF_MASTER_SECRET = "master_secret"

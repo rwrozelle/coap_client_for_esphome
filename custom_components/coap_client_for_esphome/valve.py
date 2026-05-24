@@ -1,6 +1,7 @@
 """Valve platform for the CoAP Client integration."""
 
 import contextlib
+import logging
 from typing import Any
 
 import cbor2
@@ -17,6 +18,8 @@ from . import CoapClientConfigEntry
 from .const import SENML_VB
 from .coordinator import CoapCoordinator, CoapResource
 from .entity import CoapEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -68,7 +71,7 @@ class CoapValve(CoapEntity, ValveEntity):
     def _apply_state(self, data: dict[str, Any]) -> None:
         raw = data.get("value")
         if raw is not None:
-            self._attr_current_valve_position = round(float(raw) * 100)
+            self._attr_current_valve_position = max(0, min(100, round(float(raw) * 100)))
         self._attr_is_opening = False
         self._attr_is_closing = False
         self._attr_assumed_state = False
@@ -101,7 +104,7 @@ class CoapValve(CoapEntity, ValveEntity):
         """Stop the valve."""
         self._attr_assumed_state = True
         self.async_write_ha_state()
-        stop_path = self._resource.path[:-1] + "2"
+        stop_path = self._resource.stop_path or self._resource.path[:-1] + "2"
         self.hass.async_create_background_task(
             self._post_and_confirm(stop_path, True),
             name=f"coap_post_{stop_path}",
@@ -114,5 +117,8 @@ class CoapValve(CoapEntity, ValveEntity):
             if data is not None:
                 self._apply_state(data)
                 self.async_write_ha_state()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("POST to %s failed: %s", path, err)
+            if data := self._coordinator.get_state(self._resource.name):
+                self._apply_state(data)
+                self.async_write_ha_state()

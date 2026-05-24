@@ -1,5 +1,6 @@
 """Config flow for the CoAP Client integration."""
 
+import asyncio
 import logging
 from typing import Any
 
@@ -20,6 +21,7 @@ from .const import (
     CONF_RECIPIENT_ID,
     CONF_SENDER_ID,
     CONF_SUBSCRIBE_LOGS,
+    DEFAULT_PING_TIMEOUT_S,
     DEFAULT_PORT,
     DOMAIN,
 )
@@ -151,10 +153,13 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             master_secret = _clean_hex(user_input.get(CONF_MASTER_SECRET, ""))
             if not master_secret:
-                return self.async_create_entry(
-                    title=self._device_name,
-                    data={CONF_HOST: self._host, CONF_PORT: self._port},
-                )
+                if self._oscore_required:
+                    errors[CONF_MASTER_SECRET] = "oscore_field_required"
+                else:
+                    return self.async_create_entry(
+                        title=self._device_name,
+                        data={CONF_HOST: self._host, CONF_PORT: self._port},
+                    )
 
             master_salt = _clean_hex(user_input.get(CONF_MASTER_SALT, ""))
             sender_id = _clean_hex(user_input.get(CONF_SENDER_ID, ""))
@@ -230,9 +235,14 @@ async def _fetch_device_info(host: str, port: int) -> tuple[str, bool]:
     uri = f"coap://{host_uri}:{port}/info"
     ctx = await aiocoap.Context.create_client_context()
     try:
-        response = await ctx.request(
-            aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=uri)
-        ).response
+        response = await asyncio.wait_for(
+            ctx.request(
+                aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=uri)
+            ).response,
+            timeout=DEFAULT_PING_TIMEOUT_S,
+        )
+        if not response.code.is_successful():
+            raise OSError(f"/info returned {response.code}")
         raw = cbor2.loads(response.payload)
         if isinstance(raw, dict):
             name = str(raw.get("friendly_name") or raw.get("name") or host)

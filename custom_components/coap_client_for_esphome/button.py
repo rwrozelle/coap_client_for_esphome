@@ -26,6 +26,4 @@ class CoapButton(CoapEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Send a CoAP POST to trigger the button."""
-        resource = self._coordinator.get_resource_by_name(self._resource.name)
-        if resource is not None:
-            await self._coordinator.async_post(resource.path)
+        await self._coordinator.async_post(self._resource.path)

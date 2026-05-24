@@ -1,5 +1,6 @@
 """Switch platform for the CoAP Client integration."""
 
+import logging
 from typing import Any
 
 import cbor2
@@ -12,6 +13,8 @@ from . import CoapClientConfigEntry
 from .const import SENML_VB
 from .coordinator import CoapCoordinator
 from .entity import CoapEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -74,5 +77,9 @@ class CoapSwitch(CoapEntity, SwitchEntity):
                 self._attr_is_on = bool(data.get("value"))
                 self._attr_assumed_state = False
                 self.async_write_ha_state()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("POST to %s failed: %s", path, err)
+            if data := self._coordinator.get_state(self._resource.name):
+                self._attr_is_on = bool(data.get("value"))
+                self._attr_assumed_state = False
+                self.async_write_ha_state()

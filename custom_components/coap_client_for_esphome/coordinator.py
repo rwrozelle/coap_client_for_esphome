@@ -35,6 +35,7 @@ from .const import (
     CONF_OSCORE_SEQ_THRESHOLD,
     CONF_RECIPIENT_ID,
     CONF_SENDER_ID,
+    DEFAULT_PING_TIMEOUT_S,
     DEFAULT_PORT,
     RT_ACTION,
     RT_BINARY_SENSOR,
@@ -120,6 +121,7 @@ class CoapResource:
     unit: str = ""
     device_class: str = ""
     device_index: int = 0
+    stop_path: str = ""
 
 
 @dataclass
@@ -132,7 +134,7 @@ class CoapDeviceInfo:
     build_time: str = ""
     model: str = ""
     ping_interval_s: int = 60
-    ping_timeout_s: int = 150
+    ping_timeout_s: int = DEFAULT_PING_TIMEOUT_S
     ping_retry: int = 1
     areas: list[dict[str, str]] = field(default_factory=list)
     devices: list[dict[str, Any]] = field(default_factory=list)
@@ -190,10 +192,11 @@ class CoapCoordinator:
         self._available = False
         self._last_server_pong: float = 0.0
         self._last_device_uptime: int | None = None
-        self._pings_since_reconnect: int = 0
+        self._had_ping_since_reconnect: bool = False
         self._consecutive_ping_misses: int = 0
         self._reconnect_task: asyncio.Task | None = None
         self._zeroconf_unsub: Callable[[], None] | None = None
+        self._zeroconf_task: asyncio.Task | None = None
 
     def _uri(self, path: str) -> str:
         host = (
@@ -255,10 +258,15 @@ class CoapCoordinator:
     async def _async_fetch_info(self) -> None:
         assert self._context is not None
         _LOGGER.debug("Fetching /info from %s", self.host)
-        response = await self._context.request(
-            aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri("info"))
-        ).response
+        response = await asyncio.wait_for(
+            self._context.request(
+                aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri("info"))
+            ).response,
+            timeout=self.device_info.ping_timeout_s,
+        )
         _LOGGER.debug("Got /info response from %s: code=%s", self.host, response.code)
+        if not response.code.is_successful():
+            raise OSError(f"/info returned {response.code} from {self.host}")
         try:
             raw = cbor2.loads(response.payload)
             if isinstance(raw, dict):
@@ -290,14 +298,19 @@ class CoapCoordinator:
     async def _async_fetch_resources(self) -> None:
         assert self._context is not None
         _LOGGER.debug("Fetching .well-known/core from %s", self.host)
-        response = await self._context.request(
-            aiocoap.Message(
-                mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri(".well-known/core")
-            )
-        ).response
+        response = await asyncio.wait_for(
+            self._context.request(
+                aiocoap.Message(
+                    mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri(".well-known/core")
+                )
+            ).response,
+            timeout=self.device_info.ping_timeout_s,
+        )
         _LOGGER.debug(
             "Got .well-known/core response from %s: code=%s", self.host, response.code
         )
+        if not response.code.is_successful():
+            raise OSError(f".well-known/core returned {response.code} from {self.host}")
         self.resources = _parse_link_format(response.payload.decode("utf-8"))
         _LOGGER.debug(
             "Parsed %d resources from %s: %s",
@@ -452,17 +465,17 @@ class CoapCoordinator:
             else:
                 self._consecutive_ping_misses = 0
             _LOGGER.debug(
-                "Ping cycle %s: uptime=%s pings_since_reconnect=%d last_device_uptime=%s elapsed_since_pong=%.0fs consecutive_misses=%d",
+                "Ping cycle %s: uptime=%s had_ping=%s last_device_uptime=%s elapsed_since_pong=%.0fs consecutive_misses=%d",
                 self.host,
                 uptime,
-                self._pings_since_reconnect,
+                self._had_ping_since_reconnect,
                 self._last_device_uptime,
                 elapsed,
                 self._consecutive_ping_misses,
             )
             if uptime is not None:
                 should_reconnect = (
-                    uptime == -1 and self._pings_since_reconnect > 0
+                    uptime == -1 and self._had_ping_since_reconnect
                 ) or (
                     self._last_device_uptime is not None
                     and 0 <= uptime < self._last_device_uptime
@@ -477,12 +490,12 @@ class CoapCoordinator:
                     self._cancel_observations()
                     self._last_device_uptime = None
                     self._reconnect_task = self.hass.async_create_background_task(
-                        self._async_reconnect(), name=f"coap_reconnect_{self.host}"
+                        self._async_reconnect_or_backoff(), name=f"coap_reconnect_{self.host}"
                     )
                     return
                 if uptime >= 0:
                     self._last_device_uptime = uptime
-                self._pings_since_reconnect += 1
+                self._had_ping_since_reconnect = True
             if self._consecutive_ping_misses >= self.device_info.ping_retry:
                 _LOGGER.warning(
                     "CoAP server %s unresponsive after %d consecutive missed pings, entering backoff",
@@ -555,9 +568,9 @@ class CoapCoordinator:
 
     def _subscribe_zeroconf(self) -> None:
         """Watch for the device re-announcing on mDNS; triggers reconnect on device reboot."""
-        if self._zeroconf_unsub is not None:
+        if self._zeroconf_unsub is not None or self._zeroconf_task is not None:
             return
-        self.hass.async_create_background_task(
+        self._zeroconf_task = self.hass.async_create_background_task(
             self._async_subscribe_zeroconf(),
             name=f"coap_zc_{self.host}",
         )
@@ -593,6 +606,7 @@ class CoapCoordinator:
                 _remove(), name=f"coap_zc_remove_{self.host}"
             )
 
+        self._zeroconf_task = None
         self._zeroconf_unsub = _unsub
 
     @callback
@@ -618,10 +632,13 @@ class CoapCoordinator:
         self._cancel_observations()
         self._set_available(False)
         self._reconnect_task = self.hass.async_create_background_task(
-            self._async_reconnect(), name=f"coap_reconnect_{self.host}"
+            self._async_reconnect_or_backoff(), name=f"coap_reconnect_{self.host}"
         )
 
     def _unsubscribe_zeroconf(self) -> None:
+        if self._zeroconf_task is not None:
+            self._zeroconf_task.cancel()
+            self._zeroconf_task = None
         if self._zeroconf_unsub is not None:
             self._zeroconf_unsub()
             self._zeroconf_unsub = None
@@ -651,8 +668,15 @@ class CoapCoordinator:
                     _LOGGER.debug(
                         "Backoff: device %s reachable, triggering reconnect", self.host
                     )
-                    await self._async_reconnect()
-                    return
+                    try:
+                        await self._async_reconnect()
+                        return
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.debug(
+                            "Reconnect within backoff failed for %s: %s, continuing backoff",
+                            self.host,
+                            err,
+                        )
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Backoff ping exception for %s: %s", self.host, err)
             delay = min(delay * 2, _BACKOFF_MAX_S)
@@ -662,36 +686,40 @@ class CoapCoordinator:
         return {
             r.name
             for r in self.resources
-            if r.resource_type not in (RT_ACTION, RT_DEVICE)
+            if r.resource_type not in (RT_ACTION, RT_DEVICE, RT_LOG)
         }
 
     async def _async_reconnect(self) -> None:
-        """Re-fetch /info and resources then restart observations."""
+        """Re-fetch /info and resources then restart observations. Raises on failure."""
         _LOGGER.debug("Reconnect started for %s", self.host)
         self._backoff_task = None
         self._reconnect_task = None
         self._last_device_uptime = None
-        self._pings_since_reconnect = 0
+        self._had_ping_since_reconnect = False
         self._consecutive_ping_misses = 0
+        old_names = self._entity_resource_names()
+        _LOGGER.debug("Reconnect: fetching /info for %s", self.host)
+        await self._async_fetch_info()
+        _LOGGER.debug("Reconnect: fetching resources for %s", self.host)
+        await self._async_fetch_resources()
+        new_names = self._entity_resource_names()
+        if new_names != old_names:
+            _LOGGER.info(
+                "Resource set changed on %s (old=%s new=%s), reloading integration",
+                self.host,
+                old_names,
+                new_names,
+            )
+            self.hass.config_entries.async_schedule_reload(self._entry_id)
+            return
+        _LOGGER.debug("Reconnect: starting observations for %s", self.host)
+        self.async_start_observations()
+        _LOGGER.info("Reconnected to CoAP server %s", self.host)
+
+    async def _async_reconnect_or_backoff(self) -> None:
+        """Attempt reconnect; fall back to exponential backoff on failure."""
         try:
-            old_names = self._entity_resource_names()
-            _LOGGER.debug("Reconnect: fetching /info for %s", self.host)
-            await self._async_fetch_info()
-            _LOGGER.debug("Reconnect: fetching resources for %s", self.host)
-            await self._async_fetch_resources()
-            new_names = self._entity_resource_names()
-            if new_names != old_names:
-                _LOGGER.info(
-                    "Resource set changed on %s (old=%s new=%s), reloading integration",
-                    self.host,
-                    old_names,
-                    new_names,
-                )
-                self.hass.config_entries.async_schedule_reload(self._entry_id)
-                return
-            _LOGGER.debug("Reconnect: starting observations for %s", self.host)
-            self.async_start_observations()
-            _LOGGER.info("Reconnected to CoAP server %s", self.host)
+            await self._async_reconnect()
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "Reconnect to %s failed: %s, retrying backoff", self.host, err
@@ -879,7 +907,10 @@ def _parse_link_format(text: str) -> list[CoapResource]:
                     case "if":
                         resource.interface = val
                     case "ct":
-                        resource.content_type = int(val)
+                        try:
+                            resource.content_type = int(val)
+                        except ValueError:
+                            pass
                     case "title":
                         resource.title = val
                     case "oid":
@@ -889,7 +920,12 @@ def _parse_link_format(text: str) -> list[CoapResource]:
                     case "dc":
                         resource.device_class = val
                     case "dv":
-                        resource.device_index = int(val)
+                        try:
+                            resource.device_index = int(val)
+                        except ValueError:
+                            pass
+                    case "stp":
+                        resource.stop_path = val.lstrip("/")
         if not resource.name:
             resource.name = resource.title
         resources.append(resource)

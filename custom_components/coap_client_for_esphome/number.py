@@ -1,6 +1,7 @@
 """Number platform for the CoAP Client integration."""
 
 import contextlib
+import logging
 from typing import Any
 
 import cbor2
@@ -13,6 +14,8 @@ from . import CoapClientConfigEntry
 from .const import SENML_V
 from .coordinator import CoapCoordinator, CoapResource
 from .entity import CoapEntity
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -67,13 +70,10 @@ class CoapNumber(CoapEntity, NumberEntity):
         self._attr_native_value = value
         self._attr_assumed_state = True
         self.async_write_ha_state()
-        resource = self._coordinator.get_resource_by_name(self._resource.name)
-        if resource is None:
-            return
         payload = cbor2.dumps({SENML_V: value})
         self.hass.async_create_background_task(
-            self._post_and_confirm(resource.path, payload),
-            name=f"coap_post_{resource.path}",
+            self._post_and_confirm(self._resource.path, payload),
+            name=f"coap_post_{self._resource.path}",
         )
 
     async def _post_and_confirm(self, path: str, payload: bytes) -> None:
@@ -83,5 +83,9 @@ class CoapNumber(CoapEntity, NumberEntity):
                 self._attr_native_value = data.get("value")
                 self._attr_assumed_state = False
                 self.async_write_ha_state()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("POST to %s failed: %s", path, err)
+            if data := self._coordinator.get_state(self._resource.name):
+                self._attr_native_value = data.get("value")
+                self._attr_assumed_state = False
+                self.async_write_ha_state()

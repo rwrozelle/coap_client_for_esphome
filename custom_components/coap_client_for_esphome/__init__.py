@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, RT_ACTION, RT_DEVICE
+from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, RT_ACTION, RT_DEVICE, RT_LOG
 from .coordinator import CoapCoordinator
 
 PLATFORMS = [
@@ -56,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: CoapClientConfigEntry) -
     current_names = {
         r.name
         for r in coordinator.resources
-        if r.resource_type not in (RT_ACTION, RT_DEVICE)
+        if r.resource_type not in (RT_ACTION, RT_DEVICE, RT_LOG)
     }
     ent_reg = er.async_get(hass)
     for entity_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
