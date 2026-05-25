@@ -6,9 +6,31 @@ from dataclasses import dataclass, field
 import logging
 import re
 import secrets as _secrets
+import sys
+import types
 from typing import Any
 
 import aiocoap
+
+
+def _ensure_edhoc_stubs() -> None:
+    """Inject stub modules for EDHOC deps not needed for pre-shared-key OSCORE.
+
+    aiocoap's oscore transport imports edhoc.py which imports lakers at module
+    level, and oscore_missing_modules() also checks for ge25519. Neither package
+    is needed for basic OSCORE with pre-shared keys (they exist for EDHOC key
+    establishment). Stub them so the OSCORE transport loads without requiring
+    hard-to-build Rust/native packages.
+    """
+    for mod_name in ("lakers", "ge25519"):
+        if mod_name not in sys.modules:
+            try:
+                __import__(mod_name)
+            except ImportError:
+                sys.modules[mod_name] = types.ModuleType(mod_name)
+
+
+_ensure_edhoc_stubs()
 from aiocoap.oscore import (
     DEFAULT_ALGORITHM,
     DEFAULT_HASHFUNCTION,
