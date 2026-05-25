@@ -44,6 +44,7 @@ from .const import (
     RT_LOG,
     RT_LOCK,
     RT_NUMBER,
+    RT_PING,
     RT_SENSOR,
     RT_SWITCH,
     RT_TEXT_SENSOR,
@@ -183,6 +184,7 @@ class CoapCoordinator:
         self._context: aiocoap.Context | None = None
         self._oscore_config = oscore_config
         self._oscore_save_callback = oscore_save_callback
+        self._oscore_ctx: _SimpleOscoreSecurityContext | None = None
         self._state: dict[str, dict[str, Any]] = {}
         self._subscriptions: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
         self._availability_callbacks: list[Callable[[bool], None]] = []
@@ -213,13 +215,13 @@ class CoapCoordinator:
         self._context = await aiocoap.Context.create_server_context(
             site, bind=("::", 0)
         )
-        if self._oscore_config:
-            self._configure_oscore()
         await self._async_fetch_info()
         await self._async_fetch_resources()
+        if self._oscore_config:
+            self._configure_oscore()
 
     def _configure_oscore(self) -> None:
-        """Register an in-memory OSCORE security context for the server URI."""
+        """Build the OSCORE security context and register credentials for entity resource paths."""
         cfg = self._oscore_config
         assert cfg is not None
         master_secret = bytes.fromhex(cfg[CONF_MASTER_SECRET])
@@ -233,7 +235,7 @@ class CoapCoordinator:
         id_context = bytes.fromhex(id_context_hex) if id_context_hex else None
         initial_seq_no = int(cfg.get(CONF_OSCORE_SEQ_THRESHOLD, 0))
 
-        oscore_ctx = _SimpleOscoreSecurityContext(
+        self._oscore_ctx = _SimpleOscoreSecurityContext(
             master_secret=master_secret,
             master_salt=master_salt,
             sender_id=sender_id,
@@ -242,18 +244,33 @@ class CoapCoordinator:
             initial_seq_no=initial_seq_no,
             on_threshold=self._oscore_save_callback,
         )
+        # Save next threshold immediately so a crash before the first crossing is safe.
+        if self._oscore_save_callback is not None:
+            self._oscore_save_callback(self._oscore_ctx._oscore_seq_threshold)  # noqa: SLF001
+        self._apply_oscore_credentials()
+        protected = sum(1 for r in self.resources if r.resource_type != RT_PING)
+        _LOGGER.info("OSCORE enabled for %s (%d protected paths)", self.host, protected)
+
+    def _apply_oscore_credentials(self) -> None:
+        """Register OSCORE credentials for each protected resource path.
+
+        Excludes the ping resource so that /ping, /info, and .well-known/core
+        remain unencrypted — the server's handlers for those paths do not perform
+        OSCORE decryption.
+        """
+        if self._oscore_ctx is None or self._context is None:
+            return
         host_str = (
             f"[{self.host}]"
             if ":" in self.host and not self.host.startswith("[")
             else self.host
         )
-        uri_pattern = f"coap://{host_str}:{self.port}/*"
-        assert self._context is not None
-        self._context.client_credentials[uri_pattern] = oscore_ctx
-        oscore_ctx.authenticated_claims = [uri_pattern]
-        # Save next threshold immediately so a crash before the first crossing is safe.
-        if self._oscore_save_callback is not None:
-            self._oscore_save_callback(oscore_ctx._oscore_seq_threshold)  # noqa: SLF001
+        for resource in self.resources:
+            if resource.resource_type != RT_PING:
+                uri = f"coap://{host_str}:{self.port}/{resource.path}"
+                self._context.client_credentials[uri] = self._oscore_ctx
+                _LOGGER.debug("OSCORE credential registered for %s", uri)
+        self._oscore_ctx.authenticated_claims = [f"coap://{host_str}:{self.port}/*"]
 
     async def _async_fetch_info(self) -> None:
         assert self._context is not None
@@ -702,6 +719,8 @@ class CoapCoordinator:
         await self._async_fetch_info()
         _LOGGER.debug("Reconnect: fetching resources for %s", self.host)
         await self._async_fetch_resources()
+        if self._oscore_ctx is not None:
+            self._apply_oscore_credentials()
         new_names = self._entity_resource_names()
         if new_names != old_names:
             _LOGGER.info(

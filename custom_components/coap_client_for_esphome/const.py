@@ -14,6 +14,7 @@ CONF_OSCORE_SEQ_THRESHOLD = "oscore_seq_threshold"
 
 CONF_SUBSCRIBE_LOGS = "subscribe_logs"
 
+RT_PING = "esphome.ping"
 RT_LOG = "esphome.log"
 RT_SENSOR = "esphome.sensor"
 RT_SWITCH = "esphome.switch"
