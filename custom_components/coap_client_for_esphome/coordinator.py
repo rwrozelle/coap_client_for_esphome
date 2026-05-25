@@ -93,6 +93,16 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         self.authenticated_claims: list[str] = []
         self.derive_keys(master_salt, master_secret)
 
+    def protect(self, message, request_id=None, **kwargs):
+        result = super().protect(message, request_id=request_id, **kwargs)
+        outer = result[0] if isinstance(result, tuple) else result
+        _LOGGER.debug(
+            "OSCORE protect: outer code=%s opt.oscore=%r",
+            outer.code,
+            outer.opt.oscore,
+        )
+        return result
+
     def post_seqnoincrease(self) -> None:
         if self.sender_sequence_number >= self._oscore_seq_threshold:
             self._oscore_seq_threshold = (
@@ -103,6 +113,7 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
 
 
 _LOGGER = logging.getLogger(__name__)
+logging.getLogger("coap.oscore").setLevel(logging.DEBUG)
 
 _BACKOFF_BASE_S = 10.0
 _BACKOFF_MAX_S = 300.0
