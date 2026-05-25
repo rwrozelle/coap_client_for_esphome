@@ -25,11 +25,11 @@ coap_server:
 coap_server:
   port: 5683                        # UDP port (default 5683)
   server_ping_interval: 60s         # How often the device pings HA (default 60s, min 20s)
-  server_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5)
+  server_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5), Timeout has a floor of 1 second.
   server_ping_retry: 1              # Consecutive missed pings before reconnect (default 1)
   client_ping_interval: 60s         # How often HA pings the device (default 60s)
-  client_ping_timeout_ratio: 2.5
-  client_ping_retry: 1
+  client_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5), Timeout has a floor of 1 second.
+  client_ping_retry: 1              # Consecutive missed pings before reconnect (default 1)
   max_connections: 1                # Max simultaneous HA connections (default 1)
   subscription_confirm: false       # Require CON observe subscriptions (default false)
   oscore:                           # Optional OSCORE encryption
