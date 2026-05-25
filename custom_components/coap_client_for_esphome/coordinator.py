@@ -116,14 +116,12 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         self.derive_keys(master_salt, master_secret)
 
     def protect(self, message, request_id=None, **kwargs):
-        result = super().protect(message, request_id=request_id, **kwargs)
-        outer = result[0] if isinstance(result, tuple) else result
-        _LOGGER.debug(
-            "OSCORE protect: outer code=%s opt.oscore=%r",
-            outer.code,
-            outer.opt.oscore,
-        )
-        return result
+        protected_msg, req_id = super().protect(message, request_id=request_id, **kwargs)
+        # OpenThread's IsRequest() only covers GET/POST/PUT/DELETE (0x01-0x04);
+        # FETCH (0x05) is treated as a response and RST'd. Remap to POST.
+        if protected_msg.code == aiocoap.FETCH:
+            protected_msg = protected_msg.copy(code=aiocoap.POST)
+        return protected_msg, req_id
 
     def post_seqnoincrease(self) -> None:
         if self.sender_sequence_number >= self._oscore_seq_threshold:
@@ -135,7 +133,6 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
 
 
 _LOGGER = logging.getLogger(__name__)
-logging.getLogger("coap.oscore").setLevel(logging.DEBUG)
 
 _BACKOFF_BASE_S = 10.0
 _BACKOFF_MAX_S = 300.0
@@ -248,10 +245,6 @@ class CoapCoordinator:
         self._context = await aiocoap.Context.create_server_context(
             site, bind=("::", 0)
         )
-        _LOGGER.debug(
-            "aiocoap transports: %s",
-            [type(t).__name__ for t in self._context.request_interfaces],
-        )
         await self._async_fetch_info()
         await self._async_fetch_resources()
         if self._oscore_config:
@@ -295,7 +288,9 @@ class CoapCoordinator:
         if self._oscore_save_callback is not None:
             self._oscore_save_callback(self._oscore_ctx._oscore_seq_threshold)  # noqa: SLF001
         self._apply_oscore_credentials()
-        protected = sum(1 for r in self.resources if r.resource_type != RT_PING)
+        protected = sum(
+            1 for r in self.resources if r.resource_type not in (RT_PING, RT_DEVICE)
+        )
         _LOGGER.info("OSCORE enabled for %s (%d protected paths)", self.host, protected)
 
     def _apply_oscore_credentials(self) -> None:
@@ -313,7 +308,7 @@ class CoapCoordinator:
             else self.host
         )
         for resource in self.resources:
-            if resource.resource_type != RT_PING:
+            if resource.resource_type not in (RT_PING, RT_DEVICE):
                 uri = f"coap://{host_str}:{self.port}/{resource.path}"
                 self._context.client_credentials[uri] = self._oscore_ctx
                 _LOGGER.debug("OSCORE credential registered for %s", uri)
@@ -423,14 +418,6 @@ class CoapCoordinator:
         assert self._context is not None
         _LOGGER.debug("Sending GET+Observe for %s on %s", resource.path, self.host)
         uri = self._uri(resource.path)
-        try:
-            from aiocoap.credentials import CredentialsMissingError
-            cred = self._context.client_credentials.credentials_from_request(
-                aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=uri, observe=0)
-            )
-            _LOGGER.debug("OSCORE credential for %s: %s", uri, type(cred).__name__)
-        except Exception as _cred_err:  # noqa: BLE001
-            _LOGGER.warning("No OSCORE credential for %s: %s", uri, _cred_err)
         try:
             pr = self._context.request(
                 aiocoap.Message(

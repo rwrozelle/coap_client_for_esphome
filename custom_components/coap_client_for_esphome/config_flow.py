@@ -18,6 +18,7 @@ from .const import (
     CONF_MASTER_SALT,
     CONF_MASTER_SECRET,
     CONF_OSCORE,
+    CONF_OSCORE_SEQ_THRESHOLD,
     CONF_RECIPIENT_ID,
     CONF_SENDER_ID,
     CONF_SUBSCRIBE_LOGS,
@@ -203,6 +204,88 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="oscore",
             data_schema=STEP_OSCORE_SCHEMA,
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Allow the user to view and update OSCORE credentials."""
+        entry = self._get_reconfigure_entry()
+        current_oscore = entry.data.get(CONF_OSCORE, {})
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            master_secret = _clean_hex(user_input.get(CONF_MASTER_SECRET, ""))
+            master_salt = _clean_hex(user_input.get(CONF_MASTER_SALT, ""))
+            sender_id = _clean_hex(user_input.get(CONF_SENDER_ID, ""))
+            recipient_id = _clean_hex(user_input.get(CONF_RECIPIENT_ID, ""))
+            id_context = _clean_hex(user_input.get(CONF_ID_CONTEXT, ""))
+
+            if not master_secret:
+                errors[CONF_MASTER_SECRET] = "oscore_field_required"
+
+            for field, value in (
+                (CONF_MASTER_SECRET, master_secret),
+                (CONF_MASTER_SALT, master_salt),
+                (CONF_SENDER_ID, sender_id),
+                (CONF_RECIPIENT_ID, recipient_id),
+                (CONF_ID_CONTEXT, id_context),
+            ):
+                if value and not _validate_hex(value):
+                    errors[field] = "invalid_hex"
+
+            if not sender_id:
+                errors[CONF_SENDER_ID] = "oscore_field_required"
+            if not recipient_id:
+                errors[CONF_RECIPIENT_ID] = "oscore_field_required"
+
+            if not errors and sender_id == recipient_id:
+                errors["base"] = "oscore_ids_same"
+
+            if not errors:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data={
+                        **entry.data,
+                        CONF_OSCORE: {
+                            CONF_MASTER_SECRET: master_secret,
+                            CONF_MASTER_SALT: master_salt,
+                            CONF_SENDER_ID: sender_id,
+                            CONF_RECIPIENT_ID: recipient_id,
+                            CONF_ID_CONTEXT: id_context,
+                            CONF_OSCORE_SEQ_THRESHOLD: 0,
+                        },
+                    },
+                )
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_MASTER_SECRET,
+                    default=current_oscore.get(CONF_MASTER_SECRET, ""),
+                ): str,
+                vol.Optional(
+                    CONF_MASTER_SALT,
+                    default=current_oscore.get(CONF_MASTER_SALT, ""),
+                ): str,
+                vol.Optional(
+                    CONF_SENDER_ID,
+                    default=current_oscore.get(CONF_SENDER_ID, ""),
+                ): str,
+                vol.Optional(
+                    CONF_RECIPIENT_ID,
+                    default=current_oscore.get(CONF_RECIPIENT_ID, ""),
+                ): str,
+                vol.Optional(
+                    CONF_ID_CONTEXT,
+                    default=current_oscore.get(CONF_ID_CONTEXT, ""),
+                ): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=schema,
             errors=errors,
         )
 
