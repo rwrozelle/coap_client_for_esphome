@@ -375,12 +375,21 @@ class CoapCoordinator:
         """Observe a resource, delivering state updates until the observation ends."""
         assert self._context is not None
         _LOGGER.debug("Sending GET+Observe for %s on %s", resource.path, self.host)
+        uri = self._uri(resource.path)
+        try:
+            from aiocoap.credentials import CredentialsMissingError
+            cred = self._context.client_credentials.credentials_from_request(
+                aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=uri, observe=0)
+            )
+            _LOGGER.debug("OSCORE credential for %s: %s", uri, type(cred).__name__)
+        except Exception as _cred_err:  # noqa: BLE001
+            _LOGGER.warning("No OSCORE credential for %s: %s", uri, _cred_err)
         try:
             pr = self._context.request(
                 aiocoap.Message(
                     mtype=aiocoap.NON,
                     code=aiocoap.GET,
-                    uri=self._uri(resource.path),
+                    uri=uri,
                     observe=0,
                 )
             )
