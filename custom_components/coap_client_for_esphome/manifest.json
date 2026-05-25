@@ -9,7 +9,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/rwrozelle/coap_client_for_esphome/issues",
   "quality_scale": "bronze",
-  "requirements": ["aiocoap==0.4.17", "cbor2==5.9.0"],
+  "requirements": ["aiocoap[oscore]==0.4.17", "cbor2==5.9.0"],
   "version": "1.0.0",
   "zeroconf": ["_coap._udp.local."]
 }
