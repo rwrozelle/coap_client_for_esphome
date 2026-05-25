@@ -226,6 +226,10 @@ class CoapCoordinator:
         self._context = await aiocoap.Context.create_server_context(
             site, bind=("::", 0)
         )
+        _LOGGER.debug(
+            "aiocoap transports: %s",
+            [type(t).__name__ for t in self._context.request_interfaces],
+        )
         await self._async_fetch_info()
         await self._async_fetch_resources()
         if self._oscore_config:
@@ -233,6 +237,16 @@ class CoapCoordinator:
 
     def _configure_oscore(self) -> None:
         """Build the OSCORE security context and register credentials for entity resource paths."""
+        from aiocoap.defaults import oscore_missing_modules
+
+        missing = oscore_missing_modules()
+        if missing:
+            _LOGGER.error(
+                "OSCORE cannot be enabled: missing modules %s — requests will be unencrypted",
+                missing,
+            )
+            return
+
         cfg = self._oscore_config
         assert cfg is not None
         master_secret = bytes.fromhex(cfg[CONF_MASTER_SECRET])
