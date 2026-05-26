@@ -121,6 +121,12 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         # FETCH (0x05) is treated as a response and RST'd. Remap to POST.
         if protected_msg.code == aiocoap.FETCH:
             protected_msg = protected_msg.copy(code=aiocoap.POST)
+        # RFC 8613 treats Uri-Path as Class E (encrypted, inner-only), so the outer
+        # OSCORE message has no Uri-Path. OpenThread routes by Uri-Path before decryption
+        # and sends 4.04 Not Found for anything it can't match. Copy the original
+        # Uri-Path into the outer message so the server can route to the right handler.
+        if message.opt.uri_path:
+            protected_msg.opt.uri_path = message.opt.uri_path
         return protected_msg, req_id
 
     def post_seqnoincrease(self) -> None:
