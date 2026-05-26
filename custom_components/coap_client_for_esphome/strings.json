@@ -47,16 +47,18 @@
           "master_salt": "Master Salt",
           "master_secret": "Master Secret",
           "recipient_id": "Recipient ID",
-          "sender_id": "Sender ID"
+          "sender_id": "Sender ID",
+          "reset_replay_window": "Reset replay window"
         },
         "data_description": {
           "id_context": "Hex string — same as id_context in your ESPHome config (optional).",
           "master_salt": "Hex string — same as master_salt in your ESPHome config (optional).",
           "master_secret": "Hex string — same as master_secret in your ESPHome config.",
           "recipient_id": "Hex string — same as recipient_id in your ESPHome config (your client ID).",
-          "sender_id": "Hex string — same as sender_id in your ESPHome config (the device's sender ID)."
+          "sender_id": "Hex string — same as sender_id in your ESPHome config (the device's sender ID).",
+          "reset_replay_window": "Enable if the device was reflashed or its NVS was wiped and notifications are being rejected. Resets the client sequence number counter."
         },
-        "description": "Update the OSCORE credentials. Changing credentials will reset the sequence number counter and reload the integration.",
+        "description": "Update the OSCORE credentials. Reload will reset the receive replay window. Toggle 'Reset replay window' if the device was reflashed.",
         "title": "Reconfigure OSCORE Security"
       },
       "user": {

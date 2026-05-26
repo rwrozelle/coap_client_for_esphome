@@ -27,6 +27,8 @@ from .const import (
     DOMAIN,
 )
 
+CONF_RESET_REPLAY_WINDOW = "reset_replay_window"
+
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_SCHEMA = vol.Schema(
@@ -244,6 +246,8 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "oscore_ids_same"
 
             if not errors:
+                reset_replay = user_input.get(CONF_RESET_REPLAY_WINDOW, False)
+                existing_seq = current_oscore.get(CONF_OSCORE_SEQ_THRESHOLD, 0)
                 return self.async_update_reload_and_abort(
                     entry,
                     data={
@@ -254,7 +258,7 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_SENDER_ID: sender_id,
                             CONF_RECIPIENT_ID: recipient_id,
                             CONF_ID_CONTEXT: id_context,
-                            CONF_OSCORE_SEQ_THRESHOLD: 0,
+                            CONF_OSCORE_SEQ_THRESHOLD: 0 if reset_replay else existing_seq,
                         },
                     },
                 )
@@ -281,6 +285,7 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ID_CONTEXT,
                     default=current_oscore.get(CONF_ID_CONTEXT, ""),
                 ): str,
+                vol.Optional(CONF_RESET_REPLAY_WINDOW, default=False): bool,
             }
         )
         return self.async_show_form(

@@ -133,16 +133,16 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
             protected_msg = protected_msg.copy(mtype=message.mtype)
         import logging as _logging
         _dbg = _logging.getLogger(__name__ + ".oscore_debug")
-        _dbg.warning(
+        _dbg.debug(
             "OSCORE protect: sender_id=%s recipient_id=%s id_context=%s",
             self.sender_id.hex(),
             self.recipient_id.hex(),
             self.id_context.hex() if self.id_context else "None",
         )
-        _dbg.warning("OSCORE sender_key: %s", self.sender_key.hex())
-        _dbg.warning("OSCORE common_iv:  %s", self.common_iv.hex())
+        _dbg.debug("OSCORE sender_key: %s", self.sender_key.hex())
+        _dbg.debug("OSCORE common_iv:  %s", self.common_iv.hex())
         oscore_opt = protected_msg.opt.oscore or b""
-        _dbg.warning("OSCORE option bytes: %s", oscore_opt.hex())
+        _dbg.debug("OSCORE option bytes: %s", oscore_opt.hex())
         return protected_msg, req_id
 
     def post_seqnoincrease(self) -> None:
