@@ -127,6 +127,10 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         # Uri-Path into the outer message so the server can route to the right handler.
         if message.opt.uri_path:
             protected_msg.opt.uri_path = message.opt.uri_path
+        # Preserve the original message type (CON/NON) on the outer message so the
+        # server can infer the desired notification type per RFC 7641 §3.5.
+        if message.mtype is not None:
+            protected_msg = protected_msg.copy(mtype=message.mtype)
         import logging as _logging
         _dbg = _logging.getLogger(__name__ + ".oscore_debug")
         _dbg.warning(
