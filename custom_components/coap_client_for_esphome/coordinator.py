@@ -286,9 +286,8 @@ class CoapCoordinator:
         master_salt = (
             bytes.fromhex(cfg[CONF_MASTER_SALT]) if cfg[CONF_MASTER_SALT] else b""
         )
-        # The ESPHome device's sender_id is our recipient_id, and vice versa.
-        sender_id = bytes.fromhex(cfg[CONF_RECIPIENT_ID])
-        recipient_id = bytes.fromhex(cfg[CONF_SENDER_ID])
+        sender_id = bytes.fromhex(cfg[CONF_SENDER_ID])
+        recipient_id = bytes.fromhex(cfg[CONF_RECIPIENT_ID])
         id_context_hex = cfg[CONF_ID_CONTEXT]
         id_context = bytes.fromhex(id_context_hex) if id_context_hex else None
         initial_seq_no = int(cfg.get(CONF_OSCORE_SEQ_THRESHOLD, 0))
