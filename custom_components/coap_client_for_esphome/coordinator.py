@@ -127,6 +127,18 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         # Uri-Path into the outer message so the server can route to the right handler.
         if message.opt.uri_path:
             protected_msg.opt.uri_path = message.opt.uri_path
+        import logging as _logging
+        _dbg = _logging.getLogger(__name__ + ".oscore_debug")
+        _dbg.warning(
+            "OSCORE protect: sender_id=%s recipient_id=%s id_context=%s",
+            self.sender_id.hex(),
+            self.recipient_id.hex(),
+            self.id_context.hex() if self.id_context else "None",
+        )
+        _dbg.warning("OSCORE sender_key: %s", self.sender_key.hex())
+        _dbg.warning("OSCORE common_iv:  %s", self.common_iv.hex())
+        oscore_opt = protected_msg.opt.oscore or b""
+        _dbg.warning("OSCORE option bytes: %s", oscore_opt.hex())
         return protected_msg, req_id
 
     def post_seqnoincrease(self) -> None:
