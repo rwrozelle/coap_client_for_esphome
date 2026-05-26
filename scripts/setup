@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Set up the coap_client_for_esphome development environment.
+#
+# Creates venv/ containing:
+#   - pytest and all test dependencies
+#   - homeassistant and validation packages (for hassfest / HACS hooks)
+#   - pre-commit (wired to git hooks on completion)
+#
+# Run once after cloning, or to rebuild after deleting venv/.
+# Requires ~/dev/core (HA core repo) for hassfest to work at commit time.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+UV="${HOME}/.local/bin/uv"
+
+# ---------------------------------------------------------------------------
+# 1. Ensure uv is available
+# ---------------------------------------------------------------------------
+echo "==> Checking for uv..."
+if ! command -v uv &>/dev/null && [ ! -x "${UV}" ]; then
+    echo "    Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+UV="$(command -v uv 2>/dev/null || echo "${UV}")"
+
+# ---------------------------------------------------------------------------
+# 2. Create venv/ and install everything
+# ---------------------------------------------------------------------------
+echo "==> Creating venv/..."
+"${UV}" venv "${REPO_ROOT}/venv"
+
+echo "==> Installing test dependencies..."
+"${UV}" pip install \
+    --python "${REPO_ROOT}/venv/bin/python" \
+    -r "${REPO_ROOT}/requirements_tests.txt"
+
+echo "==> Installing validation and pre-commit packages..."
+"${UV}" pip install \
+    --python "${REPO_ROOT}/venv/bin/python" \
+    homeassistant tqdm ruff awesomeversion voluptuous pre-commit
+
+# ---------------------------------------------------------------------------
+# 3. Wire git hooks
+# ---------------------------------------------------------------------------
+echo "==> Installing git hooks..."
+"${REPO_ROOT}/venv/bin/pre-commit" install
+
+echo ""
+echo "Done."
+echo ""
+echo "  Activate:   source venv/bin/activate"
+echo "  Run tests:  venv/bin/pytest tests/"
+echo "  Lint:       venv/bin/pre-commit run --all-files"

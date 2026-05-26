@@ -1,5 +1,7 @@
 """CoAP coordinator for the CoAP Client integration."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -131,18 +133,6 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         # server can infer the desired notification type per RFC 7641 §3.5.
         if message.mtype is not None:
             protected_msg = protected_msg.copy(mtype=message.mtype)
-        import logging as _logging
-        _dbg = _logging.getLogger(__name__ + ".oscore_debug")
-        _dbg.debug(
-            "OSCORE protect: sender_id=%s recipient_id=%s id_context=%s",
-            self.sender_id.hex(),
-            self.recipient_id.hex(),
-            self.id_context.hex() if self.id_context else "None",
-        )
-        _dbg.debug("OSCORE sender_key: %s", self.sender_key.hex())
-        _dbg.debug("OSCORE common_iv:  %s", self.common_iv.hex())
-        oscore_opt = protected_msg.opt.oscore or b""
-        _dbg.debug("OSCORE option bytes: %s", oscore_opt.hex())
         return protected_msg, req_id
 
     def post_seqnoincrease(self) -> None:
@@ -456,6 +446,15 @@ class CoapCoordinator:
                 response.code,
                 pr.observation is not None,
             )
+            if not response.code.is_successful():
+                _LOGGER.warning(
+                    "Observe setup failed for %s on %s: %s",
+                    resource.path,
+                    self.host,
+                    response.code,
+                )
+                self._set_available(False)
+                return
             self._deliver(resource.name, response.payload)
             self._set_available(True)
             if pr.observation is not None:
@@ -505,6 +504,27 @@ class CoapCoordinator:
                         self.record_server_pong()
                         self._forward_logs(device_name, obs.payload)
                 finally:
+                    # ESPHome's coap_server deregisters observers on GET Observe=1
+                    # (not RST). Schedule the deregister as an independent task so
+                    # it is not cancelled together with this observation task.
+                    if self._context is not None:
+                        ctx = self._context
+                        uri = self._uri(resource.path)
+
+                        async def _deregister() -> None:
+                            try:
+                                await ctx.request(
+                                    aiocoap.Message(
+                                        mtype=aiocoap.NON,
+                                        code=aiocoap.GET,
+                                        uri=uri,
+                                        observe=1,
+                                    )
+                                ).response
+                            except Exception:  # noqa: BLE001
+                                pass
+
+                        asyncio.ensure_future(_deregister())
                     pr.observation.cancel()
         except asyncio.CancelledError:
             _LOGGER.debug("Log observe task cancelled for %s", self.host)

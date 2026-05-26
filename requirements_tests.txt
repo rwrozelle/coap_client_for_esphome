@@ -1,0 +1,5 @@
+aiocoap[oscore]
+cbor2
+zeroconf
+pytest
+pytest-asyncio

@@ -83,6 +83,37 @@ If the device requires OSCORE, a second step appears after the initial connectio
 
 > Note: Sender ID and Recipient ID are from the **device's** perspective, matching the ESPHome config directly.
 
+### OSCORE replay window
+
+OSCORE uses two independent sequence number counters to prevent replayed messages. Understanding how they persist helps diagnose authentication failures after reboots or reflashes.
+
+#### The two counters
+
+| Counter | Incremented by | Checked by | Persisted |
+|---|---|---|---|
+| **Client sender seq** | HA on every outbound request | Device's receiver window | HA config entry (threshold checkpoints every 1024) |
+| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device NVS (threshold checkpoints every 1024) |
+
+Both receiver windows are **in-memory only** — they reset to empty whenever their owner restarts.
+
+#### On HA reload or restart
+
+When HA reloads or restarts the integration, the new coordinator:
+- Reads the last saved **client sender seq threshold** from the config entry and resumes sending from there (skipping ahead to the next checkpoint boundary, at most 1024 messages)
+- Creates a **fresh empty receiver window** — accepts any sequence number from the device, including one that is lower than the last seen value
+
+This means an HA restart automatically resolves any client-side replay rejection, including the case where the device was also reflashed.
+
+#### Device reboot and reflash scenarios
+
+| Event | Effect on HA | Problem? |
+|---|---|---|
+| Device reboots (NVS intact) | Device sender seq continues from NVS; HA's fresh window on next HA restart accepts any seq | None |
+| Device reflashed (NVS cleared), HA also restarted | HA receiver window is empty → accepts device seq starting at 0 | None |
+| Device reflashed (NVS cleared), **HA still running** | HA receiver window still holds old seq values → **rejects device seq 0 as replay** | **Use Reconfigure → Reset replay window** |
+
+The only scenario requiring action is a device reflash while HA keeps running. In that case, use **Reconfigure → Reset replay window** to clear HA's in-memory receiver window.
+
 ## Supported entity types
 
 The integration creates entities for every resource advertised in the device's `.well-known/core` response. Supported resource types:
@@ -167,3 +198,43 @@ The integration maintains the connection through a ping/keepalive mechanism:
 - Confirm **Subscribe to logs from device** is enabled in the integration options.
 - Ensure the device has `USE_LOGGER` compiled in (the default for ESPHome).
 - Set the HA logger level for `custom_components.coap_client_for_esphome.coordinator` to `debug` to see all device log levels.
+
+## Development
+
+### Setup
+
+Run the setup script once after cloning. It creates `venv/` in the project root containing all test dependencies, the Home Assistant package (for hassfest/HACS validation), and pre-commit, then wires the git hooks:
+
+```bash
+scripts/setup
+```
+
+[`uv`](https://github.com/astral-sh/uv) is used for fast installs and is downloaded automatically if not present.
+
+### Running tests
+
+```bash
+venv/bin/pytest tests/
+```
+
+Or activate the venv first:
+
+```bash
+source venv/bin/activate
+pytest tests/
+```
+
+Tests use `pytest-asyncio` in auto mode. The test suite does not require a real CoAP device — all network interaction goes through an in-process mock server built on `aiocoap`.
+
+### Pre-commit hooks
+
+The setup script installs two git hooks that run automatically on `git commit`:
+
+- **hassfest** — validates the integration manifest and schema against the Home Assistant core (requires `~/dev/core` to be present)
+- **HACS** — validates HACS metadata
+
+Run them manually at any time:
+
+```bash
+venv/bin/pre-commit run --all-files
+```

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-VENV="${REPO_ROOT}/.venv-validation"
+VENV="${REPO_ROOT}/venv"
 HA_CORE="${HOME}/dev/core"
 
 echo "Running hassfest validation..."

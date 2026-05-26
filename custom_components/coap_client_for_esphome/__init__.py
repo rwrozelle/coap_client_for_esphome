@@ -19,7 +19,7 @@ PLATFORMS = [
     Platform.VALVE,
 ]
 
-type CoapClientConfigEntry = ConfigEntry[CoapCoordinator]
+CoapClientConfigEntry = ConfigEntry[CoapCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: CoapClientConfigEntry) -> bool:
