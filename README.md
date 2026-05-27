@@ -23,17 +23,23 @@ coap_server:
 
 ### Full coap_server options
 
+`subscription_confirm` selects the observe mode and determines which other options are valid.
+
+#### NON observe mode (default — `subscription_confirm: false`)
+
+The client sends non-confirmable (NON) observe requests. Liveness is tracked via a mutual ping mechanism.
+
 ```yaml
 coap_server:
   port: 5683                        # UDP port (default 5683)
+  max_connections: 1                # Max simultaneous HA connections (default 1)
+  subscription_confirm: false       # NON observe mode (default)
   server_ping_interval: 60s         # How often the device pings HA (default 60s, min 20s)
-  server_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5), Timeout has a floor of 1 second.
+  server_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5); floor of 1 second
   server_ping_retry: 1              # Consecutive missed pings before reconnect (default 1)
   client_ping_interval: 60s         # How often HA pings the device (default 60s)
-  client_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5), Timeout has a floor of 1 second.
+  client_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5); floor of 1 second
   client_ping_retry: 1              # Consecutive missed pings before reconnect (default 1)
-  max_connections: 1                # Max simultaneous HA connections (default 1)
-  subscription_confirm: false       # Require CON observe subscriptions (default false)
   oscore:                           # Optional OSCORE encryption
     master_secret: "deadbeef..."
     master_salt: ""                 # Optional
@@ -41,6 +47,26 @@ coap_server:
     recipient_id: "02"              # HA client's sender ID
     id_context: ""                  # Optional
 ```
+
+#### CON observe mode (`subscription_confirm: true`)
+
+The client sends confirmable (CON) observe requests. The server acknowledges each notification, providing built-in delivery confirmation. Ping configuration is not used in this mode; instead `observe_retry` controls re-subscription on stream failure.
+
+```yaml
+coap_server:
+  port: 5683                        # UDP port (default 5683)
+  max_connections: 1                # Max simultaneous HA connections (default 1)
+  subscription_confirm: true        # CON observe mode
+  observe_retry: 1                  # Re-subscribe attempts after stream ends (default 1, max 10)
+  oscore:                           # Optional OSCORE encryption
+    master_secret: "deadbeef..."
+    master_salt: ""                 # Optional
+    sender_id: "01"                 # Device's sender ID
+    recipient_id: "02"              # HA client's sender ID
+    id_context: ""                  # Optional
+```
+
+`observe_retry` sets how many times HA will attempt to re-establish a broken observation before marking the device unavailable. Retries use exponential backoff starting at 10 s, capping at 5 min. Setting it to `0` disables retry (stream ends → device goes unavailable immediately).
 
 ## Installation
 
@@ -61,7 +87,7 @@ coap_server:
 
 ### Automatic discovery
 
-The integration listens for `_coap._udp.local.` mDNS announcements. When a compatible device is found, a discovery notification appears in **Settings → Devices & Services**. Confirm to add it.
+The integration listens for `_esphome-coap-server._udp.local.` mDNS announcements. When a compatible device is found, a discovery notification appears in **Settings → Devices & Services**. Confirm to add it.
 
 ### Manual setup
 
@@ -164,7 +190,9 @@ Enabling or disabling this option reloads the integration. When disabled, a CoAP
 
 ## Connectivity and reconnection
 
-The integration maintains the connection through a ping/keepalive mechanism:
+### NON observe mode (`subscription_confirm: false`)
+
+Liveness is tracked via a mutual ping/keepalive mechanism:
 
 - **HA → device ping**: HA periodically sends a NON GET to `/ping` on the device. The device responds with its current uptime.
 - **Device → HA ping**: The device sends a NON GET to HA's `/ping` endpoint at its configured interval.
@@ -173,11 +201,20 @@ The integration maintains the connection through a ping/keepalive mechanism:
 - **Backoff**: If the device stops responding, the integration enters an exponential backoff reconnect loop (starting at 10 s, capping at 5 min).
 - **Resource change detection**: If the set of entities on the device changes after a reconnect (firmware update added or removed components), the config entry reloads automatically to pick up the new entity set.
 
+### CON observe mode (`subscription_confirm: true`)
+
+CON notifications are acknowledged by the server, so the protocol itself confirms delivery. Ping is not used. Instead, the integration monitors the observation stream:
+
+- **Stream end / failure**: If the server terminates an observation (e.g. on reboot) or the stream otherwise fails, the integration re-subscribes automatically.
+- **Retry with backoff**: Re-subscription attempts use exponential backoff (starting at 10 s, capping at 5 min), up to the `observe_retry` limit configured on the server.
+- **Unavailable after retries exhausted**: If all retry attempts fail, the device is marked unavailable. Reconnection resumes when the device is next reachable (e.g. via mDNS re-announcement).
+- **mDNS reconnect**: When a device re-announces on mDNS, the integration reconnects and re-establishes observations regardless of retry state.
+
 ## Troubleshooting
 
 **Device not discovered automatically**
 - Confirm the Thread network is operational and the device has joined it.
-- Verify the device is advertising `_coap._udp.local.` — check with `avahi-browse -r _coap._udp` or a mDNS browser.
+- Verify the device is advertising `_esphome-coap-server._udp.local.` — check with `avahi-browse -r _esphome-coap-server._udp` or a mDNS browser.
 - Try adding the device manually using its IPv6 address.
 
 **Cannot connect / setup fails**

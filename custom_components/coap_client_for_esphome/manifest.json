@@ -11,5 +11,5 @@
   "quality_scale": "bronze",
   "requirements": ["aiocoap[oscore]==0.4.17", "cbor2==5.9.0"],
   "version": "1.0.0",
-  "zeroconf": ["_coap._udp.local."]
+  "zeroconf": ["_esphome-coap-server._udp.local."]
 }

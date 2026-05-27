@@ -353,6 +353,53 @@ class _LogResource(resource.ObservableResource):
         )
 
 
+class _TerminatingEntityResource(resource.ObservableResource):
+    """Entity resource that can terminate all its observations on demand."""
+
+    def __init__(self, value: float = 0.0) -> None:
+        super().__init__()
+        self._value = value
+        self.observe_request_count: int = 0
+
+    def _payload(self) -> bytes:
+        return cbor2.dumps([{SENML_V: float(self._value)}])
+
+    async def render_get(self, request):
+        if request.opt.observe == 0:
+            self.observe_request_count += 1
+        return aiocoap.Message(
+            code=aiocoap.CONTENT,
+            payload=self._payload(),
+            content_format=60,
+        )
+
+    def end_all_observations(self) -> None:
+        """Terminate all active observations (server-initiated deregistration)."""
+        for obs in list(self._observations):
+            obs.trigger(is_last=True)
+
+
+class _MtypeCapturingEntityResource(resource.ObservableResource):
+    """Entity resource that records the mtype of each incoming observe request."""
+
+    def __init__(self, value: float = 0.0) -> None:
+        super().__init__()
+        self._value = value
+        self.received_mtypes: list = []
+
+    def _payload(self) -> bytes:
+        return cbor2.dumps([{SENML_V: float(self._value)}])
+
+    async def render_get(self, request):
+        if request.opt.observe == 0:
+            self.received_mtypes.append(request.mtype)
+        return aiocoap.Message(
+            code=aiocoap.CONTENT,
+            payload=self._payload(),
+            content_format=60,
+        )
+
+
 class _OscoreEnforcingEntityResource(resource.ObservableResource):
     """Observable resource that rejects plaintext requests with 4.01 Unauthorized."""
 

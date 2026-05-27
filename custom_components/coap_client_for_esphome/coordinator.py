@@ -179,6 +179,8 @@ class CoapDeviceInfo:
     ping_interval_s: int = 60
     ping_timeout_s: int = DEFAULT_PING_TIMEOUT_S
     ping_retry: int = 1
+    subscription_confirm: bool = False
+    observe_retry: int = 0
     areas: list[dict[str, str]] = field(default_factory=list)
     devices: list[dict[str, Any]] = field(default_factory=list)
 
@@ -214,6 +216,7 @@ class CoapCoordinator:
         oscore_save_callback: Callable[[int], None] | None = None,
         entry_id: str = "",
         subscribe_logs: bool = False,
+        observe_retry_initial_delay_s: float = _BACKOFF_BASE_S,
     ) -> None:
         """Initialize the CoAP coordinator."""
         self.hass = hass
@@ -221,6 +224,7 @@ class CoapCoordinator:
         self.port = port
         self._entry_id = entry_id
         self._subscribe_logs = subscribe_logs
+        self._observe_retry_initial_delay_s = observe_retry_initial_delay_s
         self.device_info = CoapDeviceInfo()
         self.resources: list[CoapResource] = []
         self._context: aiocoap.Context | None = None
@@ -351,6 +355,8 @@ class CoapCoordinator:
                     ping_interval_s=int(raw.get("ping_interval", 60)),
                     ping_timeout_s=int(raw.get("ping_timeout", 150)),
                     ping_retry=int(raw.get("ping_retry", 1)),
+                    subscription_confirm=bool(raw.get("subscription_confirm", False)),
+                    observe_retry=int(raw.get("observe_retry", 0)),
                     areas=raw.get("areas", []),
                     devices=raw.get("devices", []),
                 )
@@ -425,14 +431,42 @@ class CoapCoordinator:
         self._subscribe_zeroconf()
 
     async def _async_observe(self, resource: CoapResource) -> None:
-        """Observe a resource, delivering state updates until the observation ends."""
+        """Observe a resource with up to observe_retry attempts (exponential backoff)."""
+        max_retries = self.device_info.observe_retry
+        delay = self._observe_retry_initial_delay_s
+        for attempt in range(max_retries + 1):
+            await self._async_observe_once(resource)
+            if self._context is None:
+                return
+            if attempt < max_retries:
+                _LOGGER.debug(
+                    "Retrying observe for %s on %s in %.0fs (attempt %d/%d)",
+                    resource.path,
+                    self.host,
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _BACKOFF_MAX_S)
+            else:
+                _LOGGER.warning(
+                    "Observation for %s on %s exhausted all retries, marking unavailable",
+                    resource.path,
+                    self.host,
+                )
+                self._set_available(False)
+
+    async def _async_observe_once(self, resource: CoapResource) -> None:
+        """Single observe attempt for a resource; returns when the stream ends or fails."""
         assert self._context is not None
+        mtype = aiocoap.CON if self.device_info.subscription_confirm else aiocoap.NON
         _LOGGER.debug("Sending GET+Observe for %s on %s", resource.path, self.host)
         uri = self._uri(resource.path)
         try:
             pr = self._context.request(
                 aiocoap.Message(
-                    mtype=aiocoap.NON,
+                    mtype=mtype,
                     code=aiocoap.GET,
                     uri=uri,
                     observe=0,
@@ -483,7 +517,10 @@ class CoapCoordinator:
                                 pass
 
                         asyncio.ensure_future(_deregister())
-                    pr.observation.cancel()
+                    try:
+                        pr.observation.cancel()
+                    except Exception:  # noqa: BLE001
+                        pass  # already cancelled (e.g. server-terminated with is_last)
             else:
                 _LOGGER.debug(
                     "No observation object for %s on %s — not observable",
@@ -506,10 +543,11 @@ class CoapCoordinator:
         assert self._context is not None
         device_name = self.device_info.friendly_name or self.device_info.name or self.host
         _LOGGER.debug("Starting log observation for %s", self.host)
+        mtype = aiocoap.CON if self.device_info.subscription_confirm else aiocoap.NON
         try:
             pr = self._context.request(
                 aiocoap.Message(
-                    mtype=aiocoap.NON,
+                    mtype=mtype,
                     code=aiocoap.GET,
                     uri=self._uri(resource.path),
                     observe=0,
@@ -715,7 +753,7 @@ class CoapCoordinator:
                 self.add_service(zc, type_, name)
 
         listener = _Listener()
-        await aiozc.async_add_service_listener("_coap._udp.local.", listener)
+        await aiozc.async_add_service_listener("_esphome-coap-server._udp.local.", listener)
 
         async def _remove() -> None:
             await aiozc.async_remove_service_listener(listener)
