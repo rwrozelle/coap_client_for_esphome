@@ -13,10 +13,12 @@ from coap_client_for_esphome.const import (
     CONF_SENDER_ID,
     RT_BINARY_SENSOR,
     RT_DEVICE,
+    RT_LOCK,
     RT_LOG,
     RT_PING,
     RT_SENSOR,
     RT_SWITCH,
+    RT_VALVE,
 )
 from coap_client_for_esphome.coordinator import CoapCoordinator
 
@@ -236,3 +238,29 @@ async def test_async_post_reaches_server(coordinator):
         await coordinator.async_post("fp/3", payload)
     except Exception:  # noqa: BLE001
         pass  # 4.05 is fine — the point is the request reached the server
+
+
+# ---------------------------------------------------------------------------
+# Lock and valve resource discovery
+# ---------------------------------------------------------------------------
+
+
+async def test_async_setup_lock_resource(lock_valve_coordinator):
+    await lock_valve_coordinator.async_setup()
+    locks = lock_valve_coordinator.locks
+    assert len(locks) == 1
+    assert locks[0].name == "door_lock"
+    assert locks[0].resource_type == RT_LOCK
+    assert locks[0].observable is True
+    assert locks[0].path == "fp/7"
+
+
+async def test_async_setup_valve_resource(lock_valve_coordinator):
+    await lock_valve_coordinator.async_setup()
+    valves = lock_valve_coordinator.valves
+    assert len(valves) == 1
+    assert valves[0].name == "garden_valve"
+    assert valves[0].resource_type == RT_VALVE
+    assert valves[0].observable is True
+    assert valves[0].path == "fp/8"
+    assert valves[0].stop_path == "fp/8/stop"

@@ -779,7 +779,7 @@ async def test_reload_with_subscribe_logs_restores_log_task(hass, mock_server, c
     coord1.async_start_observations()
     await asyncio.sleep(0.2)
     await coord1.async_teardown()
-    await asyncio.sleep(0.1)  # let server remove stale observer before coord2 subscribes
+    mock_server.clear_log_observers()  # aiocoap doesn't send deregister on teardown
 
     coord2 = CoapCoordinator(
         hass=hass,

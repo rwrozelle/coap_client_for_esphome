@@ -161,3 +161,12 @@ def test_parse_cbor_state_invalid_cbor_returns_none():
 def test_parse_cbor_state_non_dict_record_returns_none():
     payload = cbor2.dumps(["not", "a", "dict"])
     assert _parse_cbor_state(payload) is None
+
+
+def test_parse_cbor_state_integer_senml_v():
+    # Lock state is encoded as CBOR uint — _parse_cbor_state coerces SENML_V to float.
+    # int() still works correctly for lock state mapping (int(1.0) == 1).
+    payload = cbor2.dumps([{SENML_V: 1}])
+    result = _parse_cbor_state(payload)
+    assert result == {"value": 1.0}
+    assert int(result["value"]) == 1

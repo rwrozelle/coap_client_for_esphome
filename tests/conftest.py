@@ -8,6 +8,7 @@ import asyncio
 import socket
 import sys
 import types
+from enum import Enum
 from unittest.mock import AsyncMock
 
 import aiocoap
@@ -61,10 +62,108 @@ _ha_entity_registry.async_get = lambda hass: None
 _ha_entity_registry.async_entries_for_config_entry = lambda reg, entry_id: []
 _ha_helpers.entity_registry = _ha_entity_registry
 
+_ha_entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
+_ha_entity_platform.AddConfigEntryEntitiesCallback = object
+_ha_helpers.entity_platform = _ha_entity_platform
+
+_ha_device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+
+
+class _DeviceInfo(dict):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
+_ha_device_registry.DeviceInfo = _DeviceInfo
+_ha_helpers.device_registry = _ha_device_registry
+
+_ha_entity = types.ModuleType("homeassistant.helpers.entity")
+
+
+class _Entity:
+    _attr_has_entity_name = False
+    _attr_should_poll = True
+    _attr_unique_id = None
+    _attr_name = None
+    _attr_available = False
+    _attr_device_info = None
+
+    def async_on_remove(self, fn):
+        pass
+
+    def async_write_ha_state(self):
+        pass
+
+    async def async_added_to_hass(self):
+        pass
+
+
+_ha_entity.Entity = _Entity
+_ha_helpers.entity = _ha_entity
+
 _ha_components = types.ModuleType("homeassistant.components")
 _ha_zeroconf = types.ModuleType("homeassistant.components.zeroconf")
 _mock_aiozc = AsyncMock()
 _ha_zeroconf.async_get_async_instance = AsyncMock(return_value=_mock_aiozc)
+
+# ---- lock ----
+
+
+class _LockState(str, Enum):
+    LOCKED = "locked"
+    UNLOCKED = "unlocked"
+    LOCKING = "locking"
+    UNLOCKING = "unlocking"
+    JAMMED = "jammed"
+    OPEN = "open"
+    OPENING = "opening"
+
+
+class _LockEntity(_Entity):
+    _attr_is_locked = None
+    _attr_is_locking = False
+    _attr_is_unlocking = False
+    _attr_is_jammed = False
+    _attr_is_open = False
+    _attr_is_opening = False
+    _attr_assumed_state = False
+
+
+_ha_lock = types.ModuleType("homeassistant.components.lock")
+_ha_lock.LockEntity = _LockEntity
+_ha_lock.LockState = _LockState
+_ha_components.lock = _ha_lock
+
+# ---- valve ----
+
+
+class _ValveDeviceClass(str, Enum):
+    WATER = "water"
+    GAS = "gas"
+
+
+class _ValveEntityFeature:
+    OPEN = 1
+    CLOSE = 2
+    STOP = 4
+    SET_POSITION = 8
+
+
+class _ValveEntity(_Entity):
+    _attr_reports_position = False
+    _attr_supported_features = 0
+    _attr_current_valve_position = None
+    _attr_is_opening = False
+    _attr_is_closing = False
+    _attr_assumed_state = False
+    _attr_device_class = None
+
+
+_ha_valve = types.ModuleType("homeassistant.components.valve")
+_ha_valve.ValveDeviceClass = _ValveDeviceClass
+_ha_valve.ValveEntity = _ValveEntity
+_ha_valve.ValveEntityFeature = _ValveEntityFeature
+_ha_components.valve = _ha_valve
 
 for _name, _mod in [
     ("homeassistant", _ha_stub),
@@ -74,8 +173,13 @@ for _name, _mod in [
     ("homeassistant.exceptions", _ha_exceptions),
     ("homeassistant.helpers", _ha_helpers),
     ("homeassistant.helpers.entity_registry", _ha_entity_registry),
+    ("homeassistant.helpers.entity_platform", _ha_entity_platform),
+    ("homeassistant.helpers.device_registry", _ha_device_registry),
+    ("homeassistant.helpers.entity", _ha_entity),
     ("homeassistant.components", _ha_components),
     ("homeassistant.components.zeroconf", _ha_zeroconf),
+    ("homeassistant.components.lock", _ha_lock),
+    ("homeassistant.components.valve", _ha_valve),
 ]:
     sys.modules.setdefault(_name, _mod)
 
@@ -178,6 +282,8 @@ class _EntityResource(resource.ObservableResource):
             return cbor2.dumps([{SENML_VB: bool(self._value)}])
         if self._value_type == "vs":
             return cbor2.dumps([{SENML_VS: str(self._value)}])
+        if self._value_type == "v_uint":
+            return cbor2.dumps([{SENML_V: int(self._value)}])
         return cbor2.dumps([{SENML_V: float(self._value)}])
 
     async def render_get(self, request):
@@ -331,6 +437,18 @@ DEFAULT_LINK_FORMAT = (
     '</info>;rt="esphome.device"'
 )
 
+# Extends the default with lock (fp/7) and valve (fp/8)
+LOCK_VALVE_LINK_FORMAT = (
+    '</fp/1>;rt="esphome.sensor";obs;oid="temperature";uom="°C";dc="temperature",'
+    '</fp/2>;rt="esphome.binary_sensor";obs;oid="motion",'
+    '</fp/3>;rt="esphome.switch";obs;oid="relay",'
+    '</fp/7>;rt="esphome.lock";obs;oid="door_lock",'
+    '</fp/8>;rt="esphome.valve";obs;oid="garden_valve";stp=/fp/8/stop,'
+    '</fp/9/g/1>;rt="esphome.log";obs;oid="logs",'
+    '</ping>;rt="esphome.ping",'
+    '</info>;rt="esphome.device"'
+)
+
 # Mirrors the entity set in test-espc6-pm-coap-full.yaml
 FULL_LINK_FORMAT = (
     '</fp/1>;rt="esphome.sensor";obs;oid="uptime";uom="s";dc="duration",'
@@ -386,6 +504,8 @@ class MockCoapServer:
             "temperature": _make(20.0, "v"),
             "motion": _make(False, "vb"),
             "relay": _make(False, "vb"),
+            "door_lock": _make(2, "v_uint"),  # 2 = UNLOCKED
+            "garden_valve": _make(0.0, "v"),  # 0.0 = closed
         }
         self._log = _LogResource()
         self._ping = _PingResource()
@@ -393,6 +513,8 @@ class MockCoapServer:
         self._site.add_resource(["fp", "1"], self._entities["temperature"])
         self._site.add_resource(["fp", "2"], self._entities["motion"])
         self._site.add_resource(["fp", "3"], self._entities["relay"])
+        self._site.add_resource(["fp", "7"], self._entities["door_lock"])
+        self._site.add_resource(["fp", "8"], self._entities["garden_valve"])
         self._site.add_resource(["fp", "9", "g", "1"], self._log)
         self._site.add_resource(["ping"], self._ping)
         self._site.add_resource(
@@ -460,6 +582,10 @@ class MockCoapServer:
         """
         self._log.notify(entries)
 
+    def clear_log_observers(self) -> None:
+        """Remove all registered log observers (call between coordinator restarts)."""
+        self._log._observations.clear()
+
 
 # ---------------------------------------------------------------------------
 # pytest fixtures
@@ -469,6 +595,14 @@ class MockCoapServer:
 @pytest.fixture
 async def mock_server():
     server = MockCoapServer()
+    await server.start()
+    yield server
+    await server.stop()
+
+
+@pytest.fixture
+async def lock_valve_server():
+    server = MockCoapServer(link_format=LOCK_VALVE_LINK_FORMAT)
     await server.start()
     yield server
     await server.stop()
@@ -494,6 +628,18 @@ async def coordinator(hass, mock_server):
         hass=hass,
         host=mock_server.host,
         port=mock_server.port,
+    )
+    yield coord
+    await coord.async_teardown()
+    await hass.cancel_all_tasks()
+
+
+@pytest.fixture
+async def lock_valve_coordinator(hass, lock_valve_server):
+    coord = CoapCoordinator(
+        hass=hass,
+        host=lock_valve_server.host,
+        port=lock_valve_server.port,
     )
     yield coord
     await coord.async_teardown()
@@ -563,4 +709,5 @@ __all__ = [
     "CONF_OSCORE_SEQ_THRESHOLD",
     "CONF_RECIPIENT_ID",
     "CONF_SENDER_ID",
+    "LOCK_VALVE_LINK_FORMAT",
 ]

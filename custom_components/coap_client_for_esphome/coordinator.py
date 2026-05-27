@@ -465,6 +465,24 @@ class CoapCoordinator:
                         "Observation stream ended for %s on %s", resource.path, self.host
                     )
                 finally:
+                    if self._context is not None:
+                        ctx = self._context
+                        deregister_uri = uri
+
+                        async def _deregister() -> None:
+                            try:
+                                await ctx.request(
+                                    aiocoap.Message(
+                                        mtype=aiocoap.NON,
+                                        code=aiocoap.GET,
+                                        uri=deregister_uri,
+                                        observe=1,
+                                    )
+                                ).response
+                            except Exception:  # noqa: BLE001
+                                pass
+
+                        asyncio.ensure_future(_deregister())
                     pr.observation.cancel()
             else:
                 _LOGGER.debug(

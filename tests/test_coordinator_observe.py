@@ -185,3 +185,72 @@ async def test_get_resource_by_name_returns_resource(coordinator):
 async def test_get_resource_by_name_missing_returns_none(coordinator):
     await coordinator.async_setup()
     assert coordinator.get_resource_by_name("nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# Lock and valve notification delivery
+# ---------------------------------------------------------------------------
+
+
+async def test_initial_value_delivered_lock(lock_valve_coordinator, lock_valve_server):
+    lock_valve_server.set_value("door_lock", 1)  # LOCKED
+    await lock_valve_coordinator.async_setup()
+    lock_valve_coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+    state = lock_valve_coordinator.get_state("door_lock")
+    assert state is not None
+    assert state["value"] == 1
+
+
+async def test_initial_value_delivered_valve(lock_valve_coordinator, lock_valve_server):
+    lock_valve_server.set_value("garden_valve", 0.5)
+    await lock_valve_coordinator.async_setup()
+    lock_valve_coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+    state = lock_valve_coordinator.get_state("garden_valve")
+    assert state is not None
+    assert state["value"] == pytest.approx(0.5)
+
+
+async def test_notification_updates_lock_state(lock_valve_coordinator, lock_valve_server):
+    await lock_valve_coordinator.async_setup()
+    lock_valve_coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+
+    lock_valve_server.set_value("door_lock", 2)  # UNLOCKED
+    await asyncio.sleep(0.2)
+    assert lock_valve_coordinator.get_state("door_lock")["value"] == 2
+
+
+async def test_notification_updates_valve_position(lock_valve_coordinator, lock_valve_server):
+    await lock_valve_coordinator.async_setup()
+    lock_valve_coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+
+    lock_valve_server.set_value("garden_valve", 1.0)
+    await asyncio.sleep(0.2)
+    assert lock_valve_coordinator.get_state("garden_valve")["value"] == pytest.approx(1.0)
+
+
+async def test_lock_subscribe_callback_fires(lock_valve_coordinator, lock_valve_server):
+    received: list = []
+    await lock_valve_coordinator.async_setup()
+    lock_valve_coordinator.subscribe("door_lock", lambda d: received.append(d["value"]))
+    lock_valve_coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+
+    lock_valve_server.set_value("door_lock", 3)  # JAMMED
+    await asyncio.sleep(0.2)
+    assert 3 in received
+
+
+async def test_valve_subscribe_callback_fires(lock_valve_coordinator, lock_valve_server):
+    received: list = []
+    await lock_valve_coordinator.async_setup()
+    lock_valve_coordinator.subscribe("garden_valve", lambda d: received.append(d["value"]))
+    lock_valve_coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+
+    lock_valve_server.set_value("garden_valve", 0.75)
+    await asyncio.sleep(0.2)
+    assert any(abs(v - 0.75) < 0.01 for v in received)
