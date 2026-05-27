@@ -77,11 +77,11 @@ If the device requires OSCORE, a second step appears after the initial connectio
 |---|---|---|
 | Master Secret | `master_secret` | Required |
 | Master Salt | `master_salt` | Optional, leave blank if unset |
-| Sender ID | `sender_id` | **The device's** sender ID |
-| Recipient ID | `recipient_id` | **The device's** recipient ID (your client ID) |
+| Sender ID | `recipient_id` | **Your** (HA client) sender ID — the device's `recipient_id` |
+| Recipient ID | `sender_id` | **The device's** sender ID |
 | ID Context | `id_context` | Optional, leave blank if unset |
 
-> Note: Sender ID and Recipient ID are from the **device's** perspective, matching the ESPHome config directly.
+> Note: Sender ID and Recipient ID are **swapped** relative to the ESPHome config — each party's sender ID is the other's recipient ID. Enter the device's `recipient_id` as the HA Sender ID, and the device's `sender_id` as the HA Recipient ID.
 
 ### OSCORE replay window
 
@@ -191,7 +191,7 @@ The integration maintains the connection through a ping/keepalive mechanism:
 - Verify the Thread network has not partitioned.
 
 **OSCORE errors**
-- Double-check that Sender ID and Recipient ID are entered from the **device's** perspective (matching the ESPHome `coap_server` config directly).
+- Double-check that Sender ID and Recipient ID are **swapped** relative to the ESPHome `coap_server` config: HA's Sender ID = device's `recipient_id`, and HA's Recipient ID = device's `sender_id`.
 - Ensure the hex strings have no typos; each must be an even number of hex digits.
 
 **Log messages not appearing**
