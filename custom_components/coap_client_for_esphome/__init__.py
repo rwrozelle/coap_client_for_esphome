@@ -4,9 +4,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, RT_ACTION, RT_DEVICE, RT_LOG
+from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, DOMAIN, RT_ACTION, RT_DEVICE, RT_LOG
 from .coordinator import CoapCoordinator
 
 PLATFORMS = [
@@ -63,6 +64,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: CoapClientConfigEntry) -
         suffix = entity_entry.unique_id.removeprefix(f"{unique_id_prefix}_")
         if suffix != entity_entry.unique_id and suffix not in current_names:
             ent_reg.async_remove(entity_entry.entity_id)
+
+    # Pre-register the parent device so sub-devices can reference it via via_device.
+    unique_id = entry.unique_id or entry.entry_id
+    dev_reg = dr.async_get(hass)
+    dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, unique_id)},
+        name=coordinator.device_info.friendly_name or coordinator.device_info.name,
+        manufacturer="ESPHome",
+        model=coordinator.device_info.model,
+        sw_version=coordinator.device_info.version,
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_start_observations()
