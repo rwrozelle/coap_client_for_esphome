@@ -500,23 +500,17 @@ class CoapCoordinator:
                     )
                 finally:
                     if self._context is not None:
-                        ctx = self._context
-                        deregister_uri = uri
-
-                        async def _deregister() -> None:
-                            try:
-                                await ctx.request(
-                                    aiocoap.Message(
-                                        mtype=aiocoap.NON,
-                                        code=aiocoap.GET,
-                                        uri=deregister_uri,
-                                        observe=1,
-                                    )
-                                ).response
-                            except Exception:  # noqa: BLE001
-                                pass
-
-                        asyncio.ensure_future(_deregister())
+                        try:
+                            self._context.request(
+                                aiocoap.Message(
+                                    mtype=mtype,
+                                    code=aiocoap.GET,
+                                    uri=uri,
+                                    observe=1,
+                                )
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
                     try:
                         pr.observation.cancel()
                     except Exception:  # noqa: BLE001
@@ -560,28 +554,22 @@ class CoapCoordinator:
                         self.record_server_pong()
                         self._forward_logs(device_name, obs.payload)
                 finally:
-                    # ESPHome's coap_server deregisters observers on GET Observe=1
-                    # (not RST). Schedule the deregister as an independent task so
-                    # it is not cancelled together with this observation task.
                     if self._context is not None:
-                        ctx = self._context
-                        uri = self._uri(resource.path)
-
-                        async def _deregister() -> None:
-                            try:
-                                await ctx.request(
-                                    aiocoap.Message(
-                                        mtype=aiocoap.NON,
-                                        code=aiocoap.GET,
-                                        uri=uri,
-                                        observe=1,
-                                    )
-                                ).response
-                            except Exception:  # noqa: BLE001
-                                pass
-
-                        asyncio.ensure_future(_deregister())
-                    pr.observation.cancel()
+                        try:
+                            self._context.request(
+                                aiocoap.Message(
+                                    mtype=mtype,
+                                    code=aiocoap.GET,
+                                    uri=self._uri(resource.path),
+                                    observe=1,
+                                )
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                    try:
+                        pr.observation.cancel()
+                    except Exception:  # noqa: BLE001
+                        pass
         except asyncio.CancelledError:
             _LOGGER.debug("Log observe task cancelled for %s", self.host)
             raise

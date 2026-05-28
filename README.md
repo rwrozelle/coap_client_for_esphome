@@ -13,7 +13,7 @@ Your ESPHome device must be on a Thread network and configured with the `coap_se
 ```yaml
 external_components:
   - source: github://rwrozelle/esphome@coap_server
-    components: [coap_server]
+    components: [coap_server, mdns]
 
 openthread:
   # ... your Thread network credentials
