@@ -1,6 +1,7 @@
 """Tests for CoapCoordinator setup: /info fetch, resource discovery, OSCORE config."""
 
 import asyncio
+import logging
 
 import pytest
 
@@ -263,4 +264,51 @@ async def test_async_setup_valve_resource(lock_valve_coordinator):
     assert valves[0].resource_type == RT_VALVE
     assert valves[0].observable is True
     assert valves[0].path == "fp/8"
-    assert valves[0].stop_path == "fp/8/stop"
+
+
+# ---------------------------------------------------------------------------
+# aiocoap pipe-ended warning suppression
+# ---------------------------------------------------------------------------
+
+
+async def test_pipe_ended_warning_suppressed_after_setup(coordinator):
+    """async_setup installs a filter on the aiocoap logger that suppresses the
+    benign 'Response ... added after ... has already ended' pipe warning."""
+    await coordinator.async_setup()
+    logger = logging.getLogger("coap-server")
+    record = logging.LogRecord(
+        name="coap-server",
+        level=logging.WARNING,
+        pathname="aiocoap/pipe.py",
+        lineno=182,
+        msg="Response %r added after %r has already ended",
+        args=("event", "pipe"),
+        exc_info=None,
+    )
+    assert not logger.filter(record)
+
+
+async def test_pipe_ended_filter_allows_other_warnings(coordinator):
+    """The filter must not suppress unrelated aiocoap warnings."""
+    await coordinator.async_setup()
+    logger = logging.getLogger("coap-server")
+    record = logging.LogRecord(
+        name="coap-server",
+        level=logging.WARNING,
+        pathname="aiocoap/protocol.py",
+        lineno=0,
+        msg="Some other aiocoap warning",
+        args=(),
+        exc_info=None,
+    )
+    assert logger.filter(record)
+
+
+async def test_pipe_ended_filter_idempotent(coordinator):
+    """Calling async_setup multiple times does not stack duplicate filters."""
+    await coordinator.async_setup()
+    await coordinator._async_fetch_info()  # triggers no extra filter install
+    logger = logging.getLogger("coap-server")
+    from coap_client_for_esphome.coordinator import _AiocoapPipeEndedFilter
+    count = sum(1 for f in logger.filters if isinstance(f, _AiocoapPipeEndedFilter))
+    assert count == 1

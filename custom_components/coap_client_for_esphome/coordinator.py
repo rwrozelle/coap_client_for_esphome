@@ -146,6 +146,24 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
 
 _LOGGER = logging.getLogger(__name__)
 
+
+class _AiocoapPipeEndedFilter(logging.Filter):
+    """Suppress aiocoap's benign 'Response added after pipe ended' warning.
+
+    Fires when a NON observe notification arrives after the client has cancelled
+    the observation — a normal race condition, not a functional error.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "has already ended" not in record.getMessage()
+
+
+def _install_aiocoap_pipe_filter() -> None:
+    logger = logging.getLogger("coap-server")
+    if not any(isinstance(f, _AiocoapPipeEndedFilter) for f in logger.filters):
+        logger.addFilter(_AiocoapPipeEndedFilter())
+
+
 _BACKOFF_BASE_S = 10.0
 _BACKOFF_MAX_S = 300.0
 
@@ -256,6 +274,7 @@ class CoapCoordinator:
 
     async def async_setup(self) -> None:
         """Fetch /info and .well-known/core to bootstrap the integration."""
+        _install_aiocoap_pipe_filter()
         site = aiocoap_resource.Site()
         site.add_resource(["ping"], _PingResource(self))
         self._context = await aiocoap.Context.create_server_context(
