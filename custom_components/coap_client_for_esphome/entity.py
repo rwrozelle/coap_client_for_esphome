@@ -43,6 +43,7 @@ class CoapEntity(Entity):
                     identifiers={(DOMAIN, sub_unique)},
                     name=dev.get("name", f"Device {resource.device_index}"),
                     manufacturer="ESPHome",
+                    via_device=(DOMAIN, unique_id),
                     suggested_area=area_name,
                 )
             else:

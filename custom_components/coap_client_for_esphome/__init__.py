@@ -4,10 +4,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, DOMAIN, RT_ACTION, RT_DEVICE, RT_LOG
+from .const import CONF_OSCORE, CONF_OSCORE_SEQ_THRESHOLD, CONF_SUBSCRIBE_LOGS, RT_ACTION, RT_DEVICE, RT_LOG
 from .coordinator import CoapCoordinator
 
 PLATFORMS = [
@@ -65,47 +64,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: CoapClientConfigEntry) -
         if suffix != entity_entry.unique_id and suffix not in current_names:
             ent_reg.async_remove(entity_entry.entity_id)
 
-    _setup_device_registry(hass, entry, coordinator)
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.async_start_observations()
     return True
-
-
-def _setup_device_registry(
-    hass: HomeAssistant,
-    entry: CoapClientConfigEntry,
-    coordinator: CoapCoordinator,
-) -> None:
-    """Register the main device and sub-devices, linking them via via_device_id."""
-    unique_id = entry.unique_id or entry.entry_id
-    dev_info = coordinator.device_info
-    dev_reg = dr.async_get(hass)
-
-    main_entry = dev_reg.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, unique_id)},
-        name=dev_info.friendly_name or dev_info.name,
-        manufacturer="ESPHome",
-        model=dev_info.model,
-        sw_version=dev_info.version,
-    )
-
-    areas = dev_info.areas
-    for idx, dev in enumerate(dev_info.devices, start=1):
-        sub_unique = f"{unique_id}_dv{idx}"
-        area_name: str | None = None
-        area_idx = dev.get("area")
-        if isinstance(area_idx, int) and area_idx > 0 and area_idx <= len(areas):
-            area_name = areas[area_idx - 1].get("name")
-        sub_entry = dev_reg.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, sub_unique)},
-            name=dev.get("name", f"Device {idx}"),
-            manufacturer="ESPHome",
-            suggested_area=area_name,
-        )
-        dev_reg.async_update_device(sub_entry.id, via_device_id=main_entry.id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: CoapClientConfigEntry) -> bool:
