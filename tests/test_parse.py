@@ -163,6 +163,15 @@ def test_parse_cbor_state_non_dict_record_returns_none():
     assert _parse_cbor_state(payload) is None
 
 
+def test_parse_cbor_state_text_with_control_characters():
+    """_parse_cbor_state passes text sensor strings through unchanged, including control chars."""
+    value = "status\x00ok\x01\x1f"
+    payload = cbor2.dumps([{SENML_VS: value}])
+    result = _parse_cbor_state(payload)
+    assert result is not None
+    assert result["value"] == value
+
+
 def test_parse_cbor_state_integer_senml_v():
     # Lock state is encoded as CBOR uint — _parse_cbor_state coerces SENML_V to float.
     # int() still works correctly for lock state mapping (int(1.0) == 1).

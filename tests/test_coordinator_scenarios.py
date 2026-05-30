@@ -801,3 +801,38 @@ async def test_reload_with_subscribe_logs_restores_log_task(hass, mock_server, c
     finally:
         await coord2.async_teardown()
         await hass.cancel_all_tasks()
+
+
+# ---------------------------------------------------------------------------
+# Scenario: OSCORE client vs plaintext server (device reflashed without OSCORE)
+# ---------------------------------------------------------------------------
+
+
+async def test_oscore_client_vs_plaintext_server_stays_unavailable(hass, mock_server):
+    """A coordinator configured with OSCORE cannot observe a plaintext server.
+
+    This models a device reflashed to remove OSCORE. The coordinator sends
+    OSCORE-protected requests that the plaintext server cannot route or decrypt,
+    so entity observations fail and the coordinator stays unavailable.
+    """
+    coord = CoapCoordinator(
+        hass=hass,
+        host=mock_server.host,
+        port=mock_server.port,
+        oscore_config={
+            CONF_MASTER_SECRET: "0102030405060708090a0b0c0d0e0f10",
+            CONF_MASTER_SALT: "9e7ca92223786340",
+            CONF_SENDER_ID: "02",
+            CONF_RECIPIENT_ID: "01",
+            CONF_ID_CONTEXT: "",
+            CONF_OSCORE_SEQ_THRESHOLD: "0",
+        },
+    )
+    try:
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.3)
+        assert coord.available is False
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()

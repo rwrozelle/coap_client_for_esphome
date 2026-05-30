@@ -163,6 +163,32 @@ async def test_observe_default_no_retry_stops_updates(hass):
 
 
 # ---------------------------------------------------------------------------
+# No retry: stream end → immediate unavailable
+# ---------------------------------------------------------------------------
+
+
+async def test_observe_retry_zero_marks_unavailable_on_stream_end(hass):
+    """With observe_retry=0, stream end directly marks the coordinator unavailable."""
+    sensor = _TerminatingEntityResource(value=1.0)
+    ctx, host, port = await _make_server(sensor, observe_retry=0)
+    try:
+        coord = CoapCoordinator(hass=hass, host=host, port=port)
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.2)
+        assert coord.available is True
+
+        sensor.end_all_observations()
+        await asyncio.sleep(0.3)
+
+        assert coord.available is False
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()
+        await ctx.shutdown()
+
+
+# ---------------------------------------------------------------------------
 # Retry on stream end — updates resume after retry
 # ---------------------------------------------------------------------------
 

@@ -60,7 +60,14 @@ class CoapLock(CoapEntity, LockEntity):
 
     def _apply_state(self, data: dict[str, Any]) -> None:
         raw = data.get("value")
-        ha_state = _ESPHOME_TO_HA_LOCK_STATE.get(int(raw)) if raw is not None else None
+        if raw is None:
+            ha_state = None
+        else:
+            try:
+                ha_state = _ESPHOME_TO_HA_LOCK_STATE.get(int(raw))
+            except (TypeError, ValueError):
+                _LOGGER.warning("Invalid lock state value: %r", raw)
+                return
         self._attr_is_locked = ha_state == LockState.LOCKED if ha_state is not None else None
         self._attr_is_locking = ha_state == LockState.LOCKING
         self._attr_is_unlocking = ha_state == LockState.UNLOCKING

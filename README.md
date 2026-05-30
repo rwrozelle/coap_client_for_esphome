@@ -1,12 +1,14 @@
 # CoAP Client for ESPHome
 
-A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/esphome/tree/coap_server) external component. Communication uses the CoAP protocol over Thread (OpenThread) networks, with state updates delivered via CoAP Observe (push) — no polling.
+A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/esphome/tree/coap_server) external component. Communication uses the CoAP protocol over IPv6, with state updates delivered via CoAP Observe (push) — no polling.
+
+The `coap_server` component currently runs over Thread (OpenThread). The HA integration only needs a routable IPv6 address to reach the device — Thread is a firmware-side transport concern. Devices are reachable via a Thread border router that advertises a routed prefix, or directly if the HA host is on the same Thread network.
 
 This integration was vibe coded using Claude.
 
 ## Prerequisites
 
-Your ESPHome device must be on a Thread network and configured with the `coap_server` external component. The device must be reachable from the Home Assistant host via its Thread IPv6 address.
+Your ESPHome device must be configured with the `coap_server` external component and reachable from the Home Assistant host via an IPv6 address. The current `coap_server` implementation uses Thread (OpenThread) as its network transport, so a Thread border router with a routed prefix is the typical setup.
 
 ### Minimum ESPHome configuration
 
@@ -97,6 +99,8 @@ The integration listens for `_esphome-coap-server._udp.local.` mDNS announcement
 
 ### OSCORE encryption
 
+The integration automatically detects whether OSCORE is required by reading the `oscore` field from the device's `/info` endpoint. When `oscore:` is present in the ESPHome `coap_server` config, the device advertises `"oscore": true` and the setup flow adds a credential step. If `oscore:` is absent, setup completes without asking for credentials.
+
 If the device requires OSCORE, a second step appears after the initial connection test. Enter the hex credentials from your ESPHome `coap_server` config:
 
 | Field | ESPHome key | Notes |
@@ -140,6 +144,10 @@ This means an HA restart automatically resolves any client-side replay rejection
 
 The only scenario requiring action is a device reflash while HA keeps running. In that case, use **Reconfigure → Reset replay window** to clear HA's in-memory receiver window.
 
+### Updating OSCORE credentials
+
+To change OSCORE credentials (e.g. after generating new keys) or reset the replay window, go to **Settings → Devices & Services → CoAP Client for ESPHome → ⋮ → Reconfigure**. The reconfigure form pre-fills with the current credentials so you only need to change what has changed. Saving triggers an integration reload with the new credentials.
+
 ## Supported entity types
 
 The integration creates entities for every resource advertised in the device's `.well-known/core` response. Supported resource types:
@@ -154,7 +162,27 @@ The integration creates entities for every resource advertised in the device's `
 | `lock` | `lock` |
 | `valve` | `valve` |
 
-Entity names, units, and device classes are taken from the resource attributes advertised by the device. Sub-devices (multiple physical devices on one ESPHome node) are supported via the `dv=` resource attribute.
+Entity names, units, and device classes are taken from the resource attributes advertised by the device. Sub-devices (multiple physical devices on one ESPHome node) are supported via the `dv=` resource attribute. Area assignment is also automatic: when the device's `/info` response includes an `areas` list and a sub-device references an area by index, the integration sets `suggested_area` in HA's device registry so the device appears in the correct room without manual assignment.
+
+**Known limitation — number entity range:** The `number` platform uses a fixed range of 0–100 with step 1. ESPHome number entities with different bounds (e.g. a brightness value from 0–255) will show the correct current value but have an incorrect slider range in the HA UI. This will be resolved in a future update that adds `min=`/`max=`/`step=` attributes to the link-format protocol.
+
+### Resource attributes
+
+The integration reads the following RFC 6690 link-format attributes from each resource entry in `.well-known/core`:
+
+| Attribute | Meaning | Used for |
+|---|---|---|
+| `rt=` | Resource type (e.g. `esphome.sensor`) | Determines the HA platform |
+| `obs` | Observable flag | Whether to start a CoAP Observe stream |
+| `oid=` | Object ID / entity name | Unique identifier and display name |
+| `title=` | Human-readable title | Fallback name when `oid=` is absent |
+| `uom=` | Unit of measurement | Sensor unit (e.g. `°C`, `%`) |
+| `dc=` | Device class | HA device class (e.g. `temperature`, `motion`) |
+| `dv=` | Device index | Sub-device assignment (1-based) |
+| `stp=` | Stop path | Alternative POST path for valve stop action |
+| `ct=` | Content type | CBOR = 60 (default) |
+
+Unknown attributes are silently ignored, so firmware can include additional attributes for future use without breaking the integration.
 
 ## Options
 
@@ -225,7 +253,7 @@ CON notifications are acknowledged by the server, so the protocol itself confirm
 **Entities become unavailable**
 - Check the HA logs for ping timeout or backoff messages under `custom_components.coap_client_for_esphome`.
 - The device may have rebooted; the integration will reconnect automatically.
-- Verify the Thread network has not partitioned.
+- Verify the Thread network has not partitioned and the border router is routing the device's prefix.
 
 **OSCORE errors**
 - Double-check that Sender ID and Recipient ID are **swapped** relative to the ESPHome `coap_server` config: HA's Sender ID = device's `recipient_id`, and HA's Recipient ID = device's `sender_id`.

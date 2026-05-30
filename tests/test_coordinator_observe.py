@@ -244,6 +244,29 @@ async def test_lock_subscribe_callback_fires(lock_valve_coordinator, lock_valve_
     assert 3 in received
 
 
+# ---------------------------------------------------------------------------
+# Callback exception isolation
+# ---------------------------------------------------------------------------
+
+
+async def test_failing_callback_does_not_block_other_subscribers(coordinator, mock_server):
+    """A callback that raises must not prevent other subscribers from receiving state."""
+    received: list = []
+
+    def _bad(_data):
+        raise RuntimeError("intentional failure in callback")
+
+    await coordinator.async_setup()
+    coordinator.subscribe("temperature", _bad)
+    coordinator.subscribe("temperature", lambda d: received.append(d["value"]))
+    coordinator.async_start_observations()
+    await asyncio.sleep(0.2)
+
+    mock_server.set_value("temperature", 42.0)
+    await asyncio.sleep(0.2)
+    assert 42.0 in received
+
+
 async def test_valve_subscribe_callback_fires(lock_valve_coordinator, lock_valve_server):
     received: list = []
     await lock_valve_coordinator.async_setup()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
 import re
@@ -132,8 +132,18 @@ class _SimpleOscoreSecurityContext(CanProtect, CanUnprotect, SecurityContextUtil
         # Preserve the original message type (CON/NON) on the outer message so the
         # server can infer the desired notification type per RFC 7641 §3.5.
         if message.mtype is not None:
-            protected_msg = protected_msg.copy(mtype=message.mtype)
+            # Input was created with deprecated mtype= — map to transport_tuning
+            tuning = aiocoap.Reliable if message.mtype == aiocoap.CON else aiocoap.Unreliable
+            protected_msg = protected_msg.copy(transport_tuning=tuning)
+        elif message.transport_tuning in (aiocoap.Reliable, aiocoap.Unreliable):
+            # Input was created with new transport_tuning= API — copy directly
+            protected_msg = protected_msg.copy(transport_tuning=message.transport_tuning)
         return protected_msg, req_id
+
+    @property
+    def oscore_seq_threshold(self) -> int:
+        """Current sequence number threshold for persistence."""
+        return self._oscore_seq_threshold
 
     def post_seqnoincrease(self) -> None:
         if self.sender_sequence_number >= self._oscore_seq_threshold:
@@ -217,7 +227,7 @@ class _PingResource(aiocoap_resource.Resource):
         )
         self._coordinator.record_server_pong()
         return aiocoap.Message(
-            mtype=aiocoap.NON,
+            transport_tuning=aiocoap.Unreliable,
             code=aiocoap.CONTENT,
         )
 
@@ -261,7 +271,7 @@ class CoapCoordinator:
         self._had_ping_since_reconnect: bool = False
         self._consecutive_ping_misses: int = 0
         self._reconnect_task: asyncio.Task | None = None
-        self._zeroconf_unsub: Callable[[], None] | None = None
+        self._zeroconf_unsub: Callable[[], Awaitable[None]] | None = None
         self._zeroconf_task: asyncio.Task | None = None
 
     def _uri(self, path: str) -> str:
@@ -307,7 +317,11 @@ class CoapCoordinator:
         recipient_id = bytes.fromhex(cfg[CONF_RECIPIENT_ID])
         id_context_hex = cfg[CONF_ID_CONTEXT]
         id_context = bytes.fromhex(id_context_hex) if id_context_hex else None
-        initial_seq_no = int(cfg.get(CONF_OSCORE_SEQ_THRESHOLD, 0))
+        try:
+            initial_seq_no = int(cfg.get(CONF_OSCORE_SEQ_THRESHOLD, 0))
+        except (TypeError, ValueError):
+            _LOGGER.warning("OSCORE seq threshold invalid in config, resetting to 0")
+            initial_seq_no = 0
 
         self._oscore_ctx = _SimpleOscoreSecurityContext(
             master_secret=master_secret,
@@ -320,7 +334,7 @@ class CoapCoordinator:
         )
         # Save next threshold immediately so a crash before the first crossing is safe.
         if self._oscore_save_callback is not None:
-            self._oscore_save_callback(self._oscore_ctx._oscore_seq_threshold)  # noqa: SLF001
+            self._oscore_save_callback(self._oscore_ctx.oscore_seq_threshold)
         self._apply_oscore_credentials()
         protected = sum(
             1 for r in self.resources if r.resource_type not in (RT_PING, RT_DEVICE)
@@ -353,7 +367,7 @@ class CoapCoordinator:
         _LOGGER.debug("Fetching /info from %s", self.host)
         response = await asyncio.wait_for(
             self._context.request(
-                aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri("info"))
+                aiocoap.Message(transport_tuning=aiocoap.Unreliable, code=aiocoap.GET, uri=self._uri("info"))
             ).response,
             timeout=self.device_info.ping_timeout_s,
         )
@@ -396,7 +410,7 @@ class CoapCoordinator:
         response = await asyncio.wait_for(
             self._context.request(
                 aiocoap.Message(
-                    mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri(".well-known/core")
+                    transport_tuning=aiocoap.Unreliable, code=aiocoap.GET, uri=self._uri(".well-known/core")
                 )
             ).response,
             timeout=self.device_info.ping_timeout_s,
@@ -450,7 +464,14 @@ class CoapCoordinator:
         self._subscribe_zeroconf()
 
     async def _async_observe(self, resource: CoapResource) -> None:
-        """Observe a resource with up to observe_retry attempts (exponential backoff)."""
+        """Observe a resource with up to observe_retry attempts (exponential backoff).
+
+        In NON mode (subscription_confirm=false) this retry loop is never exercised:
+        ESPHome never sends is_last=True, so _async_observe_once never returns naturally —
+        it only exits via CancelledError when the ping loop detects a failure and calls
+        _cancel_observations(). The retry logic is meaningful only in CON mode, where
+        the server stops ACKing notifications on reboot and aiocoap terminates the stream.
+        """
         max_retries = self.device_info.observe_retry
         delay = self._observe_retry_initial_delay_s
         for attempt in range(max_retries + 1):
@@ -479,13 +500,13 @@ class CoapCoordinator:
     async def _async_observe_once(self, resource: CoapResource) -> None:
         """Single observe attempt for a resource; returns when the stream ends or fails."""
         assert self._context is not None
-        mtype = aiocoap.CON if self.device_info.subscription_confirm else aiocoap.NON
+        transport_tuning = aiocoap.Reliable if self.device_info.subscription_confirm else aiocoap.Unreliable
         _LOGGER.debug("Sending GET+Observe for %s on %s", resource.path, self.host)
         uri = self._uri(resource.path)
         try:
             pr = self._context.request(
                 aiocoap.Message(
-                    mtype=mtype,
+                    transport_tuning=transport_tuning,
                     code=aiocoap.GET,
                     uri=uri,
                     observe=0,
@@ -522,7 +543,7 @@ class CoapCoordinator:
                         try:
                             self._context.request(
                                 aiocoap.Message(
-                                    mtype=mtype,
+                                    transport_tuning=transport_tuning,
                                     code=aiocoap.GET,
                                     uri=uri,
                                     observe=1,
@@ -556,11 +577,11 @@ class CoapCoordinator:
         assert self._context is not None
         device_name = self.device_info.friendly_name or self.device_info.name or self.host
         _LOGGER.debug("Starting log observation for %s", self.host)
-        mtype = aiocoap.CON if self.device_info.subscription_confirm else aiocoap.NON
+        transport_tuning = aiocoap.Reliable if self.device_info.subscription_confirm else aiocoap.Unreliable
         try:
             pr = self._context.request(
                 aiocoap.Message(
-                    mtype=mtype,
+                    transport_tuning=transport_tuning,
                     code=aiocoap.GET,
                     uri=self._uri(resource.path),
                     observe=0,
@@ -577,7 +598,7 @@ class CoapCoordinator:
                         try:
                             self._context.request(
                                 aiocoap.Message(
-                                    mtype=mtype,
+                                    transport_tuning=transport_tuning,
                                     code=aiocoap.GET,
                                     uri=self._uri(resource.path),
                                     observe=1,
@@ -683,7 +704,7 @@ class CoapCoordinator:
             response = await asyncio.wait_for(
                 self._context.request(
                     aiocoap.Message(
-                        mtype=aiocoap.NON, code=aiocoap.GET, uri=self._uri("ping")
+                        transport_tuning=aiocoap.Unreliable, code=aiocoap.GET, uri=self._uri("ping")
                     )
                 ).response,
                 timeout=self.device_info.ping_timeout_s,
@@ -765,13 +786,8 @@ class CoapCoordinator:
         async def _remove() -> None:
             await aiozc.async_remove_service_listener(listener)
 
-        def _unsub() -> None:
-            self.hass.async_create_background_task(
-                _remove(), name=f"coap_zc_remove_{self.host}"
-            )
-
         self._zeroconf_task = None
-        self._zeroconf_unsub = _unsub
+        self._zeroconf_unsub = _remove
 
     @callback
     def _trigger_mdns_reconnect(self) -> None:
@@ -799,12 +815,15 @@ class CoapCoordinator:
             self._async_reconnect_or_backoff(), name=f"coap_reconnect_{self.host}"
         )
 
-    def _unsubscribe_zeroconf(self) -> None:
+    async def _async_unsubscribe_zeroconf(self) -> None:
         if self._zeroconf_task is not None:
             self._zeroconf_task.cancel()
             self._zeroconf_task = None
         if self._zeroconf_unsub is not None:
-            self._zeroconf_unsub()
+            try:
+                await self._zeroconf_unsub()
+            except Exception:  # noqa: BLE001
+                pass
             self._zeroconf_unsub = None
 
     async def _async_backoff_reconnect(self) -> None:
@@ -950,7 +969,10 @@ class CoapCoordinator:
         self._subscriptions.setdefault(name, []).append(cb)
 
         def unsub() -> None:
-            self._subscriptions[name].remove(cb)
+            try:
+                self._subscriptions[name].remove(cb)
+            except (ValueError, KeyError):
+                pass
 
         return unsub
 
@@ -975,7 +997,7 @@ class CoapCoordinator:
             self.host,
             len(payload) if payload else 0,
         )
-        msg = aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.POST, uri=self._uri(path))
+        msg = aiocoap.Message(transport_tuning=aiocoap.Unreliable, code=aiocoap.POST, uri=self._uri(path))
         if payload is not None:
             msg.payload = payload
             msg.opt.content_format = 60  # application/cbor
@@ -988,7 +1010,7 @@ class CoapCoordinator:
     async def async_teardown(self) -> None:
         """Cancel all observations and shut down the CoAP context."""
         _LOGGER.debug("Teardown started for %s", self.host)
-        self._unsubscribe_zeroconf()
+        await self._async_unsubscribe_zeroconf()
         self._cancel_observations()
         if self._reconnect_task is not None:
             _LOGGER.debug("Cancelling reconnect task during teardown for %s", self.host)
@@ -1109,7 +1131,7 @@ def _parse_cbor_state(payload: bytes) -> dict[str, Any] | None:
             return None
         result: dict[str, Any] = {}
         if SENML_V in record:
-            result["value"] = float(record[SENML_V])
+            result["value"] = float(record[SENML_V])  # float() handles int too (ESPHome lock uses cbor_encode_uint)
         elif SENML_VB in record:
             result["value"] = bool(record[SENML_VB])
         elif SENML_VS in record:

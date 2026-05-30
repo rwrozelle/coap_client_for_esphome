@@ -71,7 +71,11 @@ class CoapValve(CoapEntity, ValveEntity):
     def _apply_state(self, data: dict[str, Any]) -> None:
         raw = data.get("value")
         if raw is not None:
-            self._attr_current_valve_position = max(0, min(100, round(float(raw) * 100)))
+            try:
+                self._attr_current_valve_position = max(0, min(100, round(float(raw) * 100)))
+            except (TypeError, ValueError):
+                _LOGGER.warning("Invalid valve position value: %r", raw)
+                return
         self._attr_is_opening = False
         self._attr_is_closing = False
         self._attr_assumed_state = False

@@ -1,6 +1,10 @@
 """Base entity for the CoAP Client integration."""
 
+import logging
+
 from homeassistant.core import callback
+
+_LOGGER = logging.getLogger(__name__)
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 
@@ -47,6 +51,12 @@ class CoapEntity(Entity):
                     suggested_area=area_name,
                 )
             else:
+                _LOGGER.warning(
+                    "Device index %d out of range (max %d) for resource '%s', using main device",
+                    resource.device_index,
+                    len(devices),
+                    resource.name,
+                )
                 self._attr_device_info = DeviceInfo(
                     identifiers={(DOMAIN, unique_id)},
                     name=coordinator.device_info.friendly_name

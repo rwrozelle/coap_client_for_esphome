@@ -34,7 +34,46 @@ class _ConfigEntry:
         return cls
 
 
+class _ConfigFlowResult(dict):
+    pass
+
+
+class _ConfigFlow:
+    context: dict = {}
+
+    def __init_subclass__(cls, domain: str = "", **kwargs):
+        super().__init_subclass__(**kwargs)
+
+    async def async_set_unique_id(self, uid: str) -> None:
+        pass
+
+    def _abort_if_unique_id_configured(self, **kwargs) -> None:
+        pass
+
+    def _get_reconfigure_entry(self):
+        return None
+
+    def async_show_form(self, *, step_id, data_schema=None, errors=None, **kwargs):
+        return {"type": "form", "step_id": step_id, "errors": errors or {}}
+
+    def async_create_entry(self, *, title="", data):
+        return {"type": "create_entry", "title": title, "data": data}
+
+    def async_abort(self, *, reason):
+        return {"type": "abort", "reason": reason}
+
+    def async_update_reload_and_abort(self, entry, *, data, **kwargs):
+        return {"type": "update_and_abort", "data": data}
+
+
+class _OptionsFlowWithReload(_ConfigFlow):
+    config_entry = None
+
+
 _ha_config_entries.ConfigEntry = _ConfigEntry
+_ha_config_entries.ConfigFlow = _ConfigFlow
+_ha_config_entries.ConfigFlowResult = _ConfigFlowResult
+_ha_config_entries.OptionsFlowWithReload = _OptionsFlowWithReload
 
 _ha_const = types.ModuleType("homeassistant.const")
 _ha_const.CONF_HOST = "host"
@@ -57,6 +96,9 @@ class _ConfigEntryNotReady(Exception):
 _ha_exceptions.ConfigEntryNotReady = _ConfigEntryNotReady
 
 _ha_helpers = types.ModuleType("homeassistant.helpers")
+_ha_service_info = types.ModuleType("homeassistant.helpers.service_info")
+_ha_service_info_zeroconf = types.ModuleType("homeassistant.helpers.service_info.zeroconf")
+_ha_service_info_zeroconf.ZeroconfServiceInfo = object
 _ha_entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
 _ha_entity_registry.async_get = lambda hass: None
 _ha_entity_registry.async_entries_for_config_entry = lambda reg, entry_id: []
@@ -172,6 +214,8 @@ for _name, _mod in [
     ("homeassistant.const", _ha_const),
     ("homeassistant.exceptions", _ha_exceptions),
     ("homeassistant.helpers", _ha_helpers),
+    ("homeassistant.helpers.service_info", _ha_service_info),
+    ("homeassistant.helpers.service_info.zeroconf", _ha_service_info_zeroconf),
     ("homeassistant.helpers.entity_registry", _ha_entity_registry),
     ("homeassistant.helpers.entity_platform", _ha_entity_platform),
     ("homeassistant.helpers.device_registry", _ha_device_registry),
@@ -319,7 +363,7 @@ class _PingResource(resource.Resource):
         payload = b""
         if self._uptime is not None:
             payload = cbor2.dumps([{SENML_V: float(self._uptime)}])
-        return aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.CONTENT, payload=payload)
+        return aiocoap.Message(transport_tuning=aiocoap.Unreliable, code=aiocoap.CONTENT, payload=payload)
 
 
 class _LogResource(resource.ObservableResource):

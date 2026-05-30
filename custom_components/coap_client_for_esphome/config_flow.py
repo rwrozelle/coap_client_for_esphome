@@ -90,7 +90,7 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
             port = user_input.get(CONF_PORT, DEFAULT_PORT)
             try:
                 device_name, oscore_required = await _fetch_device_info(host, port)
-            except Exception:  # noqa: BLE001
+            except (aiocoap.error.Error, OSError, asyncio.TimeoutError):
                 errors["base"] = "cannot_connect"
             else:
                 await self.async_set_unique_id(device_name)
@@ -119,7 +119,7 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
         port = discovery_info.port or DEFAULT_PORT
         try:
             device_name, oscore_required = await _fetch_device_info(host, port)
-        except Exception:  # noqa: BLE001
+        except (aiocoap.error.Error, OSError, asyncio.TimeoutError):
             return self.async_abort(reason="cannot_connect")
 
         await self.async_set_unique_id(device_name)
@@ -325,7 +325,7 @@ async def _fetch_device_info(host: str, port: int) -> tuple[str, bool]:
     try:
         response = await asyncio.wait_for(
             ctx.request(
-                aiocoap.Message(mtype=aiocoap.NON, code=aiocoap.GET, uri=uri)
+                aiocoap.Message(transport_tuning=aiocoap.Unreliable, code=aiocoap.GET, uri=uri)
             ).response,
             timeout=DEFAULT_PING_TIMEOUT_S,
         )

@@ -202,21 +202,21 @@ def test_protect_copies_nested_uri_path():
 
 
 # ---------------------------------------------------------------------------
-# protect() — mtype copy (Bug 6 regression: CON/NON for observe)
+# protect() — transport_tuning copy (Bug 6 regression: CON/NON for observe)
 # ---------------------------------------------------------------------------
 
 
-def test_protect_copies_non_mtype():
+def test_protect_copies_unreliable_transport_tuning():
     ctx = _ctx()
-    msg = aiocoap.Message(code=aiocoap.GET, mtype=aiocoap.NON, uri="coap://127.0.0.1/fp/1")
+    msg = aiocoap.Message(code=aiocoap.GET, transport_tuning=aiocoap.Unreliable, uri="coap://127.0.0.1/fp/1")
     msg.opt.uri_path = ("fp", "1")
     protected, _ = ctx.protect(msg)
-    assert protected.mtype == aiocoap.NON
+    assert protected.transport_tuning is aiocoap.Unreliable
 
 
-def test_protect_copies_con_mtype():
+def test_protect_copies_reliable_transport_tuning():
     ctx = _ctx()
-    msg = aiocoap.Message(code=aiocoap.GET, mtype=aiocoap.CON, uri="coap://127.0.0.1/fp/1")
+    msg = aiocoap.Message(code=aiocoap.GET, transport_tuning=aiocoap.Reliable, uri="coap://127.0.0.1/fp/1")
     msg.opt.uri_path = ("fp", "1")
     protected, _ = ctx.protect(msg)
-    assert protected.mtype == aiocoap.CON
+    assert protected.transport_tuning is aiocoap.Reliable
