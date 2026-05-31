@@ -267,6 +267,7 @@ class CoapCoordinator:
         self._availability_callbacks: list[Callable[[bool], None]] = []
         self._observe_tasks: list[asyncio.Task] = []
         self._ping_task: asyncio.Task | None = None
+        self._ping_wakeup: asyncio.Event = asyncio.Event()
         self._backoff_task: asyncio.Task | None = None
         self._available = False
         self._last_server_pong: float = 0.0
@@ -645,7 +646,11 @@ class CoapCoordinator:
             timeout_s,
         )
         while True:
-            await asyncio.sleep(interval_s)
+            try:
+                await asyncio.wait_for(self._ping_wakeup.wait(), timeout=interval_s)
+                self._ping_wakeup.clear()
+            except asyncio.TimeoutError:
+                pass
             uptime = await self._async_send_ping()
             elapsed = self.hass.loop.time() - self._last_server_pong
             if uptime is None:
@@ -794,7 +799,17 @@ class CoapCoordinator:
 
     @callback
     def _trigger_mdns_reconnect(self) -> None:
-        """Handle mDNS re-announcement — device has rebooted."""
+        """Handle mDNS re-announcement.
+
+        When the device is currently available, wake the ping loop early so it
+        can check the uptime.  If the device has rebooted the uptime will have
+        dropped and the ping loop's existing reboot detection will handle the
+        reconnect.  Periodic mDNS TTL re-announcements (uptime still counting
+        up) cause no further action.
+
+        When the device is not yet available (still reconnecting), ignore the
+        announcement — the in-progress reconnect already handles it.
+        """
         _LOGGER.debug(
             "mDNS re-announcement from %s (available=%s)", self.host, self._available
         )
@@ -803,20 +818,8 @@ class CoapCoordinator:
                 "mDNS re-announcement from %s ignored, not yet available", self.host
             )
             return
-        _LOGGER.debug("mDNS re-announcement from %s, reconnecting", self.host)
-        if self._backoff_task is not None:
-            _LOGGER.debug("Cancelling backoff task for %s", self.host)
-            self._backoff_task.cancel()
-            self._backoff_task = None
-        if self._reconnect_task is not None:
-            _LOGGER.debug("Cancelling existing reconnect task for %s", self.host)
-            self._reconnect_task.cancel()
-            self._reconnect_task = None
-        self._cancel_observations()
-        self._set_available(False)
-        self._reconnect_task = self.hass.async_create_background_task(
-            self._async_reconnect_or_backoff(), name=f"coap_reconnect_{self.host}"
-        )
+        _LOGGER.debug("mDNS re-announcement from %s, waking ping loop early", self.host)
+        self._ping_wakeup.set()
 
     async def _async_unsubscribe_zeroconf(self) -> None:
         if self._zeroconf_task is not None:
@@ -883,6 +886,7 @@ class CoapCoordinator:
         self._last_device_uptime = None
         self._had_ping_since_reconnect = False
         self._consecutive_ping_misses = 0
+        self._ping_wakeup.clear()
         old_names = self._entity_resource_names()
         _LOGGER.debug("Reconnect: fetching /info for %s", self.host)
         await self._async_fetch_info()

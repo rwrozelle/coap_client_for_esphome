@@ -836,3 +836,63 @@ async def test_oscore_client_vs_plaintext_server_stays_unavailable(hass, mock_se
     finally:
         await coord.async_teardown()
         await hass.cancel_all_tasks()
+
+
+# ---------------------------------------------------------------------------
+# Scenario N: mDNS re-announcement handling
+# ---------------------------------------------------------------------------
+
+
+async def test_mdns_reannouncement_while_healthy_does_not_reconnect(hass, mock_server):
+    """Periodic mDNS re-announcement while device is running must not force a
+    full reconnect.  The coordinator should only wake the ping loop early; since
+    the device uptime is still counting up the ping loop takes no reconnect action
+    and the coordinator stays available.
+    """
+    mock_server.set_uptime(3300)
+    coord = CoapCoordinator(hass=hass, host=mock_server.host, port=mock_server.port)
+    try:
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.2)
+        assert coord.available is True
+
+        availability_changes: list[bool] = []
+        coord.subscribe_availability(lambda a: availability_changes.append(a))
+
+        # Simulate periodic mDNS re-announcement (uptime still counting up)
+        mock_server.set_uptime(3320)
+        coord._trigger_mdns_reconnect()
+        await asyncio.sleep(0.3)
+
+        # Must stay available — no reconnect triggered
+        assert coord.available is True
+        assert availability_changes == []
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()
+
+
+async def test_mdns_reannouncement_after_reboot_reconnects(hass, mock_server):
+    """mDNS re-announcement following a device reboot must trigger a reconnect.
+    After the wakeup, the ping returns an uptime lower than the last known value,
+    which the ping loop's existing reboot detection handles.
+    """
+    mock_server.set_uptime(3300)
+    coord = CoapCoordinator(hass=hass, host=mock_server.host, port=mock_server.port)
+    try:
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.2)
+        assert coord.available is True
+
+        # Simulate a reboot: uptime resets to a low value
+        mock_server.set_uptime(5)
+        coord._trigger_mdns_reconnect()
+        await asyncio.sleep(0.5)
+
+        # Ping loop detects uptime < last_device_uptime and reconnects
+        assert coord.available is True  # reconnect completed
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()
