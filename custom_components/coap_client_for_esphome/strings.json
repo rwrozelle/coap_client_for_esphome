@@ -20,7 +20,8 @@
       "cannot_connect": "Cannot connect to the CoAP server. Check the host and port.",
       "invalid_hex": "Must be a valid hex string (e.g. 0102abcd).",
       "oscore_field_required": "Required when Master Secret is set.",
-      "oscore_ids_same": "Sender ID and Recipient ID must be different."
+      "oscore_ids_same": "Sender ID and Recipient ID must be different.",
+      "oscore_secret_too_short": "Master Secret must be at least 16 bytes (32 hex characters)."
     },
     "step": {
       "oscore": {

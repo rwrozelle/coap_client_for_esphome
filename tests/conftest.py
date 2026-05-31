@@ -207,6 +207,46 @@ _ha_valve.ValveEntity = _ValveEntity
 _ha_valve.ValveEntityFeature = _ValveEntityFeature
 _ha_components.valve = _ha_valve
 
+# ---- switch ----
+
+class _SwitchEntity(_Entity):
+    _attr_is_on = False
+    _attr_assumed_state = False
+
+
+_ha_switch = types.ModuleType("homeassistant.components.switch")
+_ha_switch.SwitchEntity = _SwitchEntity
+_ha_components.switch = _ha_switch
+
+# ---- number ----
+
+class _NumberMode(str, Enum):
+    AUTO = "auto"
+    BOX = "box"
+    SLIDER = "slider"
+
+
+class _NumberDeviceClass(str, Enum):
+    TEMPERATURE = "temperature"
+    HUMIDITY = "humidity"
+
+
+class _NumberEntity(_Entity):
+    _attr_native_value = None
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = 100.0
+    _attr_native_step = 1.0
+    _attr_mode = None
+    _attr_assumed_state = False
+    _attr_device_class = None
+
+
+_ha_number = types.ModuleType("homeassistant.components.number")
+_ha_number.NumberEntity = _NumberEntity
+_ha_number.NumberMode = _NumberMode
+_ha_number.NumberDeviceClass = _NumberDeviceClass
+_ha_components.number = _ha_number
+
 for _name, _mod in [
     ("homeassistant", _ha_stub),
     ("homeassistant.core", _ha_core),
@@ -224,6 +264,8 @@ for _name, _mod in [
     ("homeassistant.components.zeroconf", _ha_zeroconf),
     ("homeassistant.components.lock", _ha_lock),
     ("homeassistant.components.valve", _ha_valve),
+    ("homeassistant.components.switch", _ha_switch),
+    ("homeassistant.components.number", _ha_number),
 ]:
     sys.modules.setdefault(_name, _mod)
 

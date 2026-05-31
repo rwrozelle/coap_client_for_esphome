@@ -105,7 +105,7 @@ If the device requires OSCORE, a second step appears after the initial connectio
 
 | Field | ESPHome key | Notes |
 |---|---|---|
-| Master Secret | `master_secret` | Required |
+| Master Secret | `master_secret` | Required. Minimum 16 bytes (32 hex characters). |
 | Master Salt | `master_salt` | Optional, leave blank if unset |
 | Sender ID | `recipient_id` | **Your** (HA client) sender ID — the device's `recipient_id` |
 | Recipient ID | `sender_id` | **The device's** sender ID |
@@ -164,7 +164,24 @@ The integration creates entities for every resource advertised in the device's `
 
 Entity names, units, and device classes are taken from the resource attributes advertised by the device. Sub-devices (multiple physical devices on one ESPHome node) are supported via the `dv=` resource attribute. Area assignment is also automatic: when the device's `/info` response includes an `areas` list and a sub-device references an area by index, the integration sets `suggested_area` in HA's device registry so the device appears in the correct room without manual assignment.
 
-**Known limitation — number entity range:** The `number` platform uses a fixed range of 0–100 with step 1. ESPHome number entities with different bounds (e.g. a brightness value from 0–255) will show the correct current value but have an incorrect slider range in the HA UI. This will be resolved in a future update that adds `min=`/`max=`/`step=` attributes to the link-format protocol.
+#### Lock entity states
+
+The `lock` platform maps all 8 ESPHome `LockState` values to the corresponding Home Assistant lock attributes:
+
+| ESPHome value | State | HA attribute set |
+|---|---|---|
+| 0 | NONE | `is_locked = None` (unknown) |
+| 1 | LOCKED | `is_locked = True` |
+| 2 | UNLOCKED | `is_locked = False` |
+| 3 | JAMMED | `is_jammed = True` |
+| 4 | LOCKING | `is_locking = True` |
+| 5 | UNLOCKING | `is_unlocking = True` |
+| 6 | OPENING | `is_opening = True` |
+| 7 | OPEN | `is_open = True` |
+
+States are encoded by the device as a CBOR unsigned integer (`{2: uint}`) and delivered via CoAP Observe.
+
+The `number` platform reads `min=`, `max=`, and `step=` attributes from the device's `.well-known/core` response and applies them to the HA slider range. Requires ESPHome `coap_server` firmware built after this feature was added; older firmware falls back to a default range of 0–100 with step 1.
 
 ### Resource attributes
 
@@ -218,6 +235,11 @@ Enabling or disabling this option reloads the integration. When disabled, a CoAP
 
 ## Connectivity and reconnection
 
+CoAP notifications are sent over UDP, which is best-effort and connectionless. An individual notification may be
+lost in transit — this is normal and by design. The next state change on the device delivers the current value,
+so the integration self-heals automatically. No intermediate states are buffered or retried on the device side;
+this is a deliberate trade-off to avoid runtime heap allocation and to allow the device to sleep between updates.
+
 ### NON observe mode (`subscription_confirm: false`)
 
 Liveness is tracked via a mutual ping/keepalive mechanism:
@@ -257,7 +279,7 @@ CON notifications are acknowledged by the server, so the protocol itself confirm
 
 **OSCORE errors**
 - Double-check that Sender ID and Recipient ID are **swapped** relative to the ESPHome `coap_server` config: HA's Sender ID = device's `recipient_id`, and HA's Recipient ID = device's `sender_id`.
-- Ensure the hex strings have no typos; each must be an even number of hex digits.
+- Ensure the hex strings have no typos; each must be an even number of hex digits. Master Secret must be at least 32 hex characters (16 bytes).
 
 **Log messages not appearing**
 - Confirm **Subscribe to logs from device** is enabled in the integration options.

@@ -163,6 +163,8 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
                         title=self._device_name,
                         data={CONF_HOST: self._host, CONF_PORT: self._port},
                     )
+            elif len(master_secret) < 32:
+                errors[CONF_MASTER_SECRET] = "oscore_secret_too_short"
 
             master_salt = _clean_hex(user_input.get(CONF_MASTER_SALT, ""))
             sender_id = _clean_hex(user_input.get(CONF_SENDER_ID, ""))
@@ -226,6 +228,8 @@ class CoapClientConfigFlow(ConfigFlow, domain=DOMAIN):
 
             if not master_secret:
                 errors[CONF_MASTER_SECRET] = "oscore_field_required"
+            elif len(master_secret) < 32:
+                errors[CONF_MASTER_SECRET] = "oscore_secret_too_short"
 
             for field, value in (
                 (CONF_MASTER_SECRET, master_secret),

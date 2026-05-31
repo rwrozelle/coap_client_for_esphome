@@ -95,6 +95,23 @@ async def test_oscore_step_rejects_invalid_hex_in_secret():
 
 
 @pytest.mark.asyncio
+async def test_oscore_step_rejects_short_master_secret():
+    flow = CoapClientConfigFlow()
+    flow._host = "192.168.1.1"
+    flow._port = 5683
+    flow._device_name = "test_device"
+    flow._oscore_required = True
+    result = await flow.async_step_oscore({
+        CONF_MASTER_SECRET: "0102030405060708",  # 8 hex chars = 4 bytes, too short
+        CONF_MASTER_SALT: "",
+        CONF_SENDER_ID: "01",
+        CONF_RECIPIENT_ID: "02",
+        CONF_ID_CONTEXT: "",
+    })
+    assert result["errors"].get(CONF_MASTER_SECRET) == "oscore_secret_too_short"
+
+
+@pytest.mark.asyncio
 async def test_oscore_step_rejects_matching_sender_recipient():
     flow = CoapClientConfigFlow()
     flow._host = "192.168.1.1"
@@ -203,6 +220,23 @@ async def test_reconfigure_preserves_seq_when_not_reset():
     })
     assert result["type"] == "update_and_abort"
     assert result["data"][CONF_OSCORE][CONF_OSCORE_SEQ_THRESHOLD] == 2048
+
+
+@pytest.mark.asyncio
+async def test_reconfigure_rejects_short_master_secret():
+    flow = CoapClientConfigFlow()
+    entry = _MockEntry(oscore_seq=0)
+    flow._get_reconfigure_entry = lambda: entry
+
+    result = await flow.async_step_reconfigure({
+        CONF_MASTER_SECRET: "0102030405060708",  # 8 hex chars = 4 bytes, too short
+        CONF_MASTER_SALT: "",
+        CONF_SENDER_ID: "02",
+        CONF_RECIPIENT_ID: "01",
+        CONF_ID_CONTEXT: "",
+        "reset_replay_window": False,
+    })
+    assert result["errors"].get(CONF_MASTER_SECRET) == "oscore_secret_too_short"
 
 
 @pytest.mark.asyncio

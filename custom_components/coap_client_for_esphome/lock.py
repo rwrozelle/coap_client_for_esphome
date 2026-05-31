@@ -44,6 +44,8 @@ async def async_setup_entry(
 class CoapLock(CoapEntity, LockEntity):
     """A lock entity backed by a CoAP observable resource with action endpoints."""
 
+    _locked_until: float = 0.0
+
     async def async_added_to_hass(self) -> None:
         """Register state subscription."""
         await super().async_added_to_hass()
@@ -78,6 +80,10 @@ class CoapLock(CoapEntity, LockEntity):
 
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the lock."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_is_locking = True
         self._attr_is_locked = False
         self._attr_is_unlocking = False
@@ -91,6 +97,10 @@ class CoapLock(CoapEntity, LockEntity):
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the lock."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_is_unlocking = True
         self._attr_is_locked = False
         self._attr_is_locking = False

@@ -193,6 +193,9 @@ class CoapResource:
     device_class: str = ""
     device_index: int = 0
     stop_path: str = ""
+    min_value: float | None = None
+    max_value: float | None = None
+    step: float | None = None
 
 
 @dataclass
@@ -1114,6 +1117,21 @@ def _parse_link_format(text: str) -> list[CoapResource]:
                             pass
                     case "stp":
                         resource.stop_path = val.lstrip("/")
+                    case "min":
+                        try:
+                            resource.min_value = float(val)
+                        except ValueError:
+                            pass
+                    case "max":
+                        try:
+                            resource.max_value = float(val)
+                        except ValueError:
+                            pass
+                    case "step":
+                        try:
+                            resource.step = float(val)
+                        except ValueError:
+                            pass
         if not resource.name:
             resource.name = resource.title
         resources.append(resource)

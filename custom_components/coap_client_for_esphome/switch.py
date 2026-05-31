@@ -32,6 +32,8 @@ async def async_setup_entry(
 class CoapSwitch(CoapEntity, SwitchEntity):
     """A switch entity backed by a CoAP observable resource with action endpoints."""
 
+    _locked_until: float = 0.0
+
     async def async_added_to_hass(self) -> None:
         """Register state subscription."""
         await super().async_added_to_hass()
@@ -49,6 +51,10 @@ class CoapSwitch(CoapEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the switch."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_is_on = True
         self._attr_assumed_state = True
         self.async_write_ha_state()
@@ -60,6 +66,10 @@ class CoapSwitch(CoapEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the switch."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_is_on = False
         self._attr_assumed_state = True
         self.async_write_ha_state()

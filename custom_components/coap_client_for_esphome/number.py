@@ -37,6 +37,7 @@ class CoapNumber(CoapEntity, NumberEntity):
     _attr_native_max_value = 100.0
     _attr_native_step = 1.0
     _attr_mode = NumberMode.BOX
+    _locked_until: float = 0.0
 
     def __init__(
         self,
@@ -49,6 +50,12 @@ class CoapNumber(CoapEntity, NumberEntity):
         if resource.device_class:
             with contextlib.suppress(ValueError):
                 self._attr_device_class = NumberDeviceClass(resource.device_class)
+        if resource.min_value is not None:
+            self._attr_native_min_value = resource.min_value
+        if resource.max_value is not None:
+            self._attr_native_max_value = resource.max_value
+        if resource.step is not None:
+            self._attr_native_step = resource.step
 
     async def async_added_to_hass(self) -> None:
         """Register state subscription."""
@@ -67,6 +74,10 @@ class CoapNumber(CoapEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the number value."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_native_value = value
         self._attr_assumed_state = True
         self.async_write_ha_state()

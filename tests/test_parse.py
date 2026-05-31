@@ -172,6 +172,34 @@ def test_parse_cbor_state_text_with_control_characters():
     assert result["value"] == value
 
 
+def test_parse_link_format_number_min_max_step():
+    text = '</fp/6>;rt="esphome.number";obs;oid="brightness";min=-10;max=255;step=0.5'
+    resources = _parse_link_format(text)
+    assert len(resources) == 1
+    r = resources[0]
+    assert r.min_value == -10.0
+    assert r.max_value == 255.0
+    assert r.step == 0.5
+
+
+def test_parse_link_format_number_no_range_attrs():
+    text = '</fp/6>;rt="esphome.number";obs;oid="brightness"'
+    resources = _parse_link_format(text)
+    r = resources[0]
+    assert r.min_value is None
+    assert r.max_value is None
+    assert r.step is None
+
+
+def test_parse_link_format_number_partial_range():
+    text = '</fp/6>;rt="esphome.number";obs;oid="brightness";step=1'
+    resources = _parse_link_format(text)
+    r = resources[0]
+    assert r.min_value is None
+    assert r.max_value is None
+    assert r.step == 1.0
+
+
 def test_parse_cbor_state_integer_senml_v():
     # Lock state is encoded as CBOR uint — _parse_cbor_state coerces SENML_V to float.
     # int() still works correctly for lock state mapping (int(1.0) == 1).

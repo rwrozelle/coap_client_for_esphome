@@ -38,6 +38,7 @@ class CoapValve(CoapEntity, ValveEntity):
     """A valve entity backed by a CoAP observable resource with action endpoints."""
 
     _attr_reports_position = True
+    _locked_until: float = 0.0
     _attr_supported_features = (
         ValveEntityFeature.OPEN | ValveEntityFeature.CLOSE | ValveEntityFeature.STOP
     )
@@ -82,6 +83,10 @@ class CoapValve(CoapEntity, ValveEntity):
 
     async def async_open_valve(self) -> None:
         """Open the valve."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_is_opening = True
         self._attr_is_closing = False
         self._attr_assumed_state = True
@@ -94,6 +99,10 @@ class CoapValve(CoapEntity, ValveEntity):
 
     async def async_close_valve(self) -> None:
         """Close the valve."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_is_closing = True
         self._attr_is_opening = False
         self._attr_assumed_state = True
@@ -106,6 +115,10 @@ class CoapValve(CoapEntity, ValveEntity):
 
     async def async_stop_valve(self) -> None:
         """Stop the valve."""
+        now = self.hass.loop.time()
+        if now < self._locked_until:
+            return
+        self._locked_until = now + 1.0
         self._attr_assumed_state = True
         self.async_write_ha_state()
         stop_path = self._resource.stop_path or self._resource.path[:-1] + "2"
