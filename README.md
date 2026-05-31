@@ -52,7 +52,7 @@ coap_server:
 
 #### CON observe mode (`subscription_confirm: true`)
 
-The client sends confirmable (CON) observe requests. The server acknowledges each notification, providing built-in delivery confirmation. Ping configuration is not used in this mode; instead `observe_retry` controls re-subscription on stream failure.
+The client sends confirmable (CON) observe requests. The server acknowledges each notification, providing built-in delivery confirmation. Ping is not used in this mode; `observe_retry` controls re-subscription on stream failure.
 
 ```yaml
 coap_server:
@@ -68,7 +68,9 @@ coap_server:
     id_context: ""                  # Optional
 ```
 
-`observe_retry` sets how many times HA will attempt to re-establish a broken observation before marking the device unavailable. Retries use exponential backoff starting at 10 s, capping at 5 min. Setting it to `0` disables retry (stream ends → device goes unavailable immediately).
+`observe_retry` sets how many times HA will attempt to re-establish a broken observation before entering backoff reconnect. Retries use exponential backoff starting at 10 s, capping at 5 min. Setting it to `0` means the first stream failure immediately enters backoff.
+
+> **Limitations of CON observe mode:** Reboot detection relies on the CON ACK timeout — the integration only discovers a reboot when the server tries to send a CON notification and receives no ACK. For entities that rarely change state (e.g. a switch that stays off for hours), no CON exchange occurs and a reboot may go undetected indefinitely. **Always include at least one regularly-updating entity** (such as an uptime sensor) in your CON-mode configuration so that a reboot is caught within one update cycle. mDNS re-announcements are ignored in CON mode.
 
 ## Installation
 
@@ -253,12 +255,13 @@ Liveness is tracked via a mutual ping/keepalive mechanism:
 
 ### CON observe mode (`subscription_confirm: true`)
 
-CON notifications are acknowledged by the server, so the protocol itself confirms delivery. Ping is not used. Instead, the integration monitors the observation stream:
+CON notifications are acknowledged by the server, so the protocol itself confirms delivery. The ping loop is not used in this mode. Instead, the integration monitors the observation stream:
 
-- **Stream end / failure**: If the server terminates an observation (e.g. on reboot) or the stream otherwise fails, the integration re-subscribes automatically.
-- **Retry with backoff**: Re-subscription attempts use exponential backoff (starting at 10 s, capping at 5 min), up to the `observe_retry` limit configured on the server.
-- **Unavailable after retries exhausted**: If all retry attempts fail, the device is marked unavailable. Reconnection resumes when the device is next reachable (e.g. via mDNS re-announcement).
-- **mDNS reconnect**: When a device re-announces on mDNS, the integration reconnects and re-establishes observations regardless of retry state.
+- **Stream end / failure**: If the server stops ACKing CON notifications (e.g. on reboot), aiocoap terminates the observation stream and the integration re-subscribes automatically.
+- **Retry with backoff**: Re-subscription attempts use exponential backoff (starting at 10 s, capping at 5 min), up to the `observe_retry` limit.
+- **Backoff reconnect after retries exhausted**: If all retry attempts fail, the device is marked unavailable and the integration enters exponential backoff reconnect — the same mechanism used in NON mode after missed pings.
+- **mDNS re-announcements ignored**: In CON mode, periodic mDNS TTL re-announcements do not trigger reconnects; the CON ACK mechanism is the authoritative liveness signal.
+- **Reboot detection requires regular updates**: A reboot is only detected when a CON notification is attempted and ACK'd. Entities that rarely change state will not trigger detection. Always include a regularly-updating entity (e.g. uptime sensor) to ensure reboots are caught promptly.
 
 ## Troubleshooting
 

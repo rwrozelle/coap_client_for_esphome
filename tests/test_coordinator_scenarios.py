@@ -896,3 +896,35 @@ async def test_mdns_reannouncement_after_reboot_reconnects(hass, mock_server):
     finally:
         await coord.async_teardown()
         await hass.cancel_all_tasks()
+
+
+async def test_mdns_reannouncement_ignored_when_subscription_confirm(hass, mock_server):
+    """mDNS re-announcement must be ignored entirely when subscription_confirm=True.
+
+    In CON-observe mode the reliable ACK timeout detects reboots; ping is not
+    available (returns no uptime payload).  Waking the ping loop would increment
+    consecutive_misses and trigger backoff after a single miss.  The coordinator
+    must ignore the announcement and stay available.
+    """
+    # ping returns no uptime — simulates a device without ping capability
+    mock_server.set_uptime(None)
+    coord = CoapCoordinator(hass=hass, host=mock_server.host, port=mock_server.port)
+    try:
+        await coord.async_setup()
+        coord.device_info.subscription_confirm = True
+        coord.async_start_observations()
+        await asyncio.sleep(0.2)
+        assert coord.available is True
+
+        availability_changes: list[bool] = []
+        coord.subscribe_availability(lambda a: availability_changes.append(a))
+
+        coord._trigger_mdns_reconnect()
+        await asyncio.sleep(0.3)
+
+        # Must stay available — mDNS announcement ignored, ping loop not woken
+        assert coord.available is True
+        assert availability_changes == []
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()

@@ -336,3 +336,96 @@ async def test_subscription_confirm_true_sends_con(hass):
         await coord.async_teardown()
         await hass.cancel_all_tasks()
         await ctx.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# subscription_confirm=True: no ping loop, backoff reconnect on retry exhaustion
+# ---------------------------------------------------------------------------
+
+
+async def test_subscription_confirm_no_ping_loop(hass):
+    """subscription_confirm=True must not start a ping loop.
+
+    Liveness in CON mode is provided by the ACK mechanism; starting a ping
+    loop against a device that may not return uptime would accumulate
+    consecutive misses and spuriously enter backoff.
+    """
+    sensor = _MtypeCapturingEntityResource(value=0.0)
+    ctx, host, port = await _make_server(sensor, subscription_confirm=True)
+    try:
+        coord = CoapCoordinator(hass=hass, host=host, port=port)
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.1)
+
+        assert coord._ping_task is None
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()
+        await ctx.shutdown()
+
+
+async def test_subscription_confirm_exhausted_retries_enter_backoff(hass):
+    """When a CON observe stream exhausts all retries, backoff reconnect starts.
+
+    Without the ping loop there is no other recovery path; triggering backoff
+    ensures the coordinator will reconnect once the device is reachable again.
+    """
+    sensor = _TerminatingEntityResource(value=1.0)
+    ctx, host, port = await _make_server(
+        sensor, subscription_confirm=True, observe_retry=0
+    )
+    try:
+        coord = CoapCoordinator(
+            hass=hass,
+            host=host,
+            port=port,
+            observe_retry_initial_delay_s=0.05,
+        )
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.2)
+        assert coord.available is True
+
+        sensor.end_all_observations()
+        await asyncio.sleep(0.2)
+
+        assert coord.available is False
+        assert coord._backoff_task is not None
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()
+        await ctx.shutdown()
+
+
+async def test_subscription_confirm_backoff_reconnects_when_reachable(hass):
+    """After retry exhaustion, backoff reconnect restores availability.
+
+    Once the device is reachable again the backoff loop detects it via ping
+    and re-establishes observations, returning the coordinator to available.
+    """
+    sensor = _TerminatingEntityResource(value=1.0)
+    ctx, host, port = await _make_server(
+        sensor, subscription_confirm=True, observe_retry=0
+    )
+    try:
+        coord = CoapCoordinator(
+            hass=hass,
+            host=host,
+            port=port,
+            observe_retry_initial_delay_s=0.05,
+            backoff_base_s=0.1,
+        )
+        await coord.async_setup()
+        coord.async_start_observations()
+        await asyncio.sleep(0.2)
+        assert coord.available is True
+
+        sensor.end_all_observations()
+        await asyncio.sleep(0.5)
+
+        assert coord.available is True
+    finally:
+        await coord.async_teardown()
+        await hass.cancel_all_tasks()
+        await ctx.shutdown()

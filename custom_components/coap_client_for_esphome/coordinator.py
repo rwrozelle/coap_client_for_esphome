@@ -248,6 +248,7 @@ class CoapCoordinator:
         entry_id: str = "",
         subscribe_logs: bool = False,
         observe_retry_initial_delay_s: float = _BACKOFF_BASE_S,
+        backoff_base_s: float = _BACKOFF_BASE_S,
     ) -> None:
         """Initialize the CoAP coordinator."""
         self.hass = hass
@@ -256,6 +257,7 @@ class CoapCoordinator:
         self._entry_id = entry_id
         self._subscribe_logs = subscribe_logs
         self._observe_retry_initial_delay_s = observe_retry_initial_delay_s
+        self._backoff_base_s = backoff_base_s
         self.device_info = CoapDeviceInfo()
         self.resources: list[CoapResource] = []
         self._context: aiocoap.Context | None = None
@@ -455,16 +457,22 @@ class CoapCoordinator:
             self._observe_tasks.append(task)
 
         self._last_server_pong = self.hass.loop.time()
-        self._ping_task = self.hass.async_create_background_task(
-            self._async_ping_loop(),
-            name=f"coap_ping_{self.host}",
-        )
-        _LOGGER.debug(
-            "Ping loop started for %s (interval=%ds timeout=%ds)",
-            self.host,
-            self.device_info.ping_interval_s,
-            self.device_info.ping_timeout_s,
-        )
+        if not self.device_info.subscription_confirm:
+            self._ping_task = self.hass.async_create_background_task(
+                self._async_ping_loop(),
+                name=f"coap_ping_{self.host}",
+            )
+            _LOGGER.debug(
+                "Ping loop started for %s (interval=%ds timeout=%ds)",
+                self.host,
+                self.device_info.ping_interval_s,
+                self.device_info.ping_timeout_s,
+            )
+        else:
+            _LOGGER.debug(
+                "Skipping ping loop for %s (subscription_confirm=True, CON observe handles liveness)",
+                self.host,
+            )
         self._subscribe_zeroconf()
 
     async def _async_observe(self, resource: CoapResource) -> None:
@@ -500,6 +508,9 @@ class CoapCoordinator:
                     self.host,
                 )
                 self._set_available(False)
+                if self.device_info.subscription_confirm:
+                    self._cancel_observations()
+                    self._start_backoff()
 
     async def _async_observe_once(self, resource: CoapResource) -> None:
         """Single observe attempt for a resource; returns when the stream ends or fails."""
@@ -818,6 +829,12 @@ class CoapCoordinator:
                 "mDNS re-announcement from %s ignored, not yet available", self.host
             )
             return
+        if self.device_info.subscription_confirm:
+            _LOGGER.debug(
+                "mDNS re-announcement from %s ignored (subscription_confirm=True, CON observe handles reboots)",
+                self.host,
+            )
+            return
         _LOGGER.debug("mDNS re-announcement from %s, waking ping loop early", self.host)
         self._ping_wakeup.set()
 
@@ -834,7 +851,7 @@ class CoapCoordinator:
 
     async def _async_backoff_reconnect(self) -> None:
         """Exponential backoff reconnect loop."""
-        delay = _BACKOFF_BASE_S
+        delay = self._backoff_base_s
         _LOGGER.debug("Backoff reconnect loop entered for %s", self.host)
         while True:
             _LOGGER.debug(
