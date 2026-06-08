@@ -263,6 +263,20 @@ CON notifications are acknowledged by the server, so the protocol itself confirm
 - **mDNS re-announcements ignored**: In CON mode, periodic mDNS TTL re-announcements do not trigger reconnects; the CON ACK mechanism is the authoritative liveness signal.
 - **Reboot detection requires regular updates**: A reboot is only detected when a CON notification is attempted and ACK'd. Entities that rarely change state will not trigger detection. Always include a regularly-updating entity (e.g. uptime sensor) to ensure reboots are caught promptly.
 
+### Periodic resubscription
+
+Over long runtimes (days), the aiocoap observe state for an individual resource can silently stop delivering notifications while the overall connection remains healthy — the ping still succeeds but state updates stop arriving for that entity.
+
+To guard against this, the integration automatically re-sends `GET+Observe=0` for every resource once per day. Each resource's timer is independently jittered (±25 % of the interval) so resubscriptions are spread out rather than all firing at once. On each resubscription the device responds with the current state, so entities get a fresh value regardless of whether the stream was actually broken.
+
+This mechanism applies in both NON and CON observe modes. In CON mode, planned resubscriptions do not consume the `observe_retry` budget.
+
+### Refresh subscriptions button
+
+Every device gets a **Refresh subscriptions** button entity added automatically by the integration (it does not need to be configured in ESPHome). Pressing it immediately cancels and re-establishes all observe streams for that device — equivalent to what the periodic timer does, but on demand.
+
+Use this button when an entity appears stale and you do not want to wait for the next automatic resubscription cycle. Wire it to a physical button via an automation, add it to a dashboard, or call it from a script. The ping loop and zeroconf listener are not affected.
+
 ## Troubleshooting
 
 **Device not discovered automatically**
@@ -283,6 +297,9 @@ CON notifications are acknowledged by the server, so the protocol itself confirm
 **OSCORE errors**
 - Double-check that Sender ID and Recipient ID are **swapped** relative to the ESPHome `coap_server` config: HA's Sender ID = device's `recipient_id`, and HA's Recipient ID = device's `sender_id`.
 - Ensure the hex strings have no typos; each must be an even number of hex digits. Master Secret must be at least 32 hex characters (16 bytes).
+
+**One entity is stale but others are updating normally**
+- An individual observe stream may have silently broken. Press the **Refresh subscriptions** button on the device page to re-establish all streams immediately. The integration also does this automatically once per day.
 
 **Log messages not appearing**
 - Confirm **Subscribe to logs from device** is enabled in the integration options.
