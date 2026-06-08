@@ -354,6 +354,7 @@ class _EntityResource(resource.ObservableResource):
         super().__init__()
         self._value = value
         self._value_type = value_type  # "v" float, "vb" bool, "vs" str
+        self.observe_register_count: int = 0
 
     @property
     def value(self):
@@ -373,6 +374,8 @@ class _EntityResource(resource.ObservableResource):
         return cbor2.dumps([{SENML_V: float(self._value)}])
 
     async def render_get(self, request):
+        if request.opt.observe == 0:
+            self.observe_register_count += 1
         return aiocoap.Message(
             code=aiocoap.CONTENT,
             payload=self._payload(),

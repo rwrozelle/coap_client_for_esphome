@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
+import random
 import re
 import secrets as _secrets
 import sys
@@ -249,6 +250,7 @@ class CoapCoordinator:
         subscribe_logs: bool = False,
         observe_retry_initial_delay_s: float = _BACKOFF_BASE_S,
         backoff_base_s: float = _BACKOFF_BASE_S,
+        resubscribe_interval_s: float = 86400.0,
     ) -> None:
         """Initialize the CoAP coordinator."""
         self.hass = hass
@@ -258,6 +260,7 @@ class CoapCoordinator:
         self._subscribe_logs = subscribe_logs
         self._observe_retry_initial_delay_s = observe_retry_initial_delay_s
         self._backoff_base_s = backoff_base_s
+        self._resubscribe_interval_s = resubscribe_interval_s
         self.device_info = CoapDeviceInfo()
         self.resources: list[CoapResource] = []
         self._context: aiocoap.Context | None = None
@@ -435,8 +438,8 @@ class CoapCoordinator:
         )
 
     @callback
-    def async_start_observations(self) -> None:
-        """Start observe loops for all observable resources and the ping task."""
+    def _start_observe_tasks(self) -> None:
+        """Create and register observe tasks for all observable resources."""
         observable = [r for r in self.resources if r.observable]
         _LOGGER.debug(
             "Starting %d observations on %s: %s",
@@ -456,6 +459,9 @@ class CoapCoordinator:
             task = self.hass.async_create_background_task(coro, name=name)
             self._observe_tasks.append(task)
 
+    def async_start_observations(self) -> None:
+        """Start observe loops for all observable resources and the ping task."""
+        self._start_observe_tasks()
         self._last_server_pong = self.hass.loop.time()
         if not self.device_info.subscription_confirm:
             self._ping_task = self.hass.async_create_background_task(
@@ -475,45 +481,55 @@ class CoapCoordinator:
             )
         self._subscribe_zeroconf()
 
-    async def _async_observe(self, resource: CoapResource) -> None:
-        """Observe a resource with up to observe_retry attempts (exponential backoff).
+    def async_resubscribe(self) -> None:
+        """Cancel all observe tasks and restart them immediately."""
+        _LOGGER.debug("Resubscribing all observations for %s", self.host)
+        for task in self._observe_tasks:
+            task.cancel()
+        self._observe_tasks.clear()
+        self._start_observe_tasks()
 
-        In NON mode (subscription_confirm=false) this retry loop is never exercised:
-        ESPHome never sends is_last=True, so _async_observe_once never returns naturally —
-        it only exits via CancelledError when the ping loop detects a failure and calls
-        _cancel_observations(). The retry logic is meaningful only in CON mode, where
-        the server stops ACKing notifications on reboot and aiocoap terminates the stream.
+    async def _async_observe(self, resource: CoapResource) -> None:
+        """Observe a resource with periodic resubscription and retry on failure.
+
+        Planned resubscriptions (interval elapsed) restart the retry budget immediately.
+        Unplanned exits consume the retry budget with exponential backoff; exhausting
+        it marks the coordinator unavailable.
         """
         max_retries = self.device_info.observe_retry
-        delay = self._observe_retry_initial_delay_s
-        for attempt in range(max_retries + 1):
-            await self._async_observe_once(resource)
-            if self._context is None:
-                return
-            if attempt < max_retries:
-                _LOGGER.debug(
-                    "Retrying observe for %s on %s in %.0fs (attempt %d/%d)",
-                    resource.path,
-                    self.host,
-                    delay,
-                    attempt + 1,
-                    max_retries,
-                )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, _BACKOFF_MAX_S)
-            else:
-                _LOGGER.warning(
-                    "Observation for %s on %s exhausted all retries, marking unavailable",
-                    resource.path,
-                    self.host,
-                )
-                self._set_available(False)
-                if self.device_info.subscription_confirm:
-                    self._cancel_observations()
-                    self._start_backoff()
+        while True:
+            delay = self._observe_retry_initial_delay_s
+            for attempt in range(max_retries + 1):
+                planned = await self._async_observe_once(resource)
+                if self._context is None:
+                    return
+                if planned:
+                    break  # planned resubscription — restart with fresh retry budget
+                if attempt < max_retries:
+                    _LOGGER.debug(
+                        "Retrying observe for %s on %s in %.0fs (attempt %d/%d)",
+                        resource.path,
+                        self.host,
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, _BACKOFF_MAX_S)
+                else:
+                    _LOGGER.warning(
+                        "Observation for %s on %s exhausted all retries, marking unavailable",
+                        resource.path,
+                        self.host,
+                    )
+                    self._set_available(False)
+                    if self.device_info.subscription_confirm:
+                        self._cancel_observations()
+                        self._start_backoff()
+                    return
 
-    async def _async_observe_once(self, resource: CoapResource) -> None:
-        """Single observe attempt for a resource; returns when the stream ends or fails."""
+    async def _async_observe_once(self, resource: CoapResource) -> bool:
+        """Single observe attempt; returns True if planned resubscription, False on unexpected exit."""
         assert self._context is not None
         transport_tuning = aiocoap.Reliable if self.device_info.subscription_confirm else aiocoap.Unreliable
         _LOGGER.debug("Sending GET+Observe for %s on %s", resource.path, self.host)
@@ -543,16 +559,27 @@ class CoapCoordinator:
                     response.code,
                 )
                 self._set_available(False)
-                return
+                return False
             self._deliver(resource.name, response.payload)
             self._set_available(True)
             if pr.observation is not None:
+                planned = False
                 try:
-                    async for obs in pr.observation:
-                        self._deliver(resource.name, obs.payload)
+                    jitter_s = random.uniform(
+                        self._resubscribe_interval_s * 0.75,
+                        self._resubscribe_interval_s * 1.25,
+                    )
+                    async with asyncio.timeout(jitter_s):
+                        async for obs in pr.observation:
+                            self._deliver(resource.name, obs.payload)
                     _LOGGER.debug(
                         "Observation stream ended for %s on %s", resource.path, self.host
                     )
+                except asyncio.TimeoutError:
+                    _LOGGER.debug(
+                        "Resubscribing %s on %s (interval elapsed)", resource.path, self.host
+                    )
+                    planned = True
                 finally:
                     if self._context is not None:
                         try:
@@ -570,6 +597,7 @@ class CoapCoordinator:
                         pr.observation.cancel()
                     except Exception:  # noqa: BLE001
                         pass  # already cancelled (e.g. server-terminated with is_last)
+                return planned
             else:
                 _LOGGER.debug(
                     "No observation object for %s on %s — not observable",
@@ -586,28 +614,40 @@ class CoapCoordinator:
                 "Observe failed for %s on %s: %s", resource.path, self.host, err
             )
             self._set_available(False)
+        return False
 
     async def _async_observe_logs(self, resource: CoapResource) -> None:
-        """Observe the log resource, forwarding entries to the HA logger."""
+        """Observe the log resource, resubscribing periodically."""
         assert self._context is not None
         device_name = self.device_info.friendly_name or self.device_info.name or self.host
-        _LOGGER.debug("Starting log observation for %s", self.host)
         transport_tuning = aiocoap.Reliable if self.device_info.subscription_confirm else aiocoap.Unreliable
-        try:
-            pr = self._context.request(
-                aiocoap.Message(
-                    transport_tuning=transport_tuning,
-                    code=aiocoap.GET,
-                    uri=self._uri(resource.path),
-                    observe=0,
+        while True:
+            _LOGGER.debug("Starting log observation for %s", self.host)
+            try:
+                pr = self._context.request(
+                    aiocoap.Message(
+                        transport_tuning=transport_tuning,
+                        code=aiocoap.GET,
+                        uri=self._uri(resource.path),
+                        observe=0,
+                    )
                 )
-            )
-            await pr.response  # initial response is always [] — nothing to forward
-            if pr.observation is not None:
+                await pr.response  # initial response is always [] — nothing to forward
+                if pr.observation is None:
+                    _LOGGER.debug("No observation object for logs on %s", self.host)
+                    return
                 try:
-                    async for obs in pr.observation:
-                        self.record_server_pong()
-                        self._forward_logs(device_name, obs.payload)
+                    jitter_s = random.uniform(
+                        self._resubscribe_interval_s * 0.75,
+                        self._resubscribe_interval_s * 1.25,
+                    )
+                    async with asyncio.timeout(jitter_s):
+                        async for obs in pr.observation:
+                            self.record_server_pong()
+                            self._forward_logs(device_name, obs.payload)
+                    _LOGGER.debug("Log observation stream ended for %s", self.host)
+                except asyncio.TimeoutError:
+                    _LOGGER.debug("Resubscribing log observe on %s (interval elapsed)", self.host)
                 finally:
                     if self._context is not None:
                         try:
@@ -625,11 +665,13 @@ class CoapCoordinator:
                         pr.observation.cancel()
                     except Exception:  # noqa: BLE001
                         pass
-        except asyncio.CancelledError:
-            _LOGGER.debug("Log observe task cancelled for %s", self.host)
-            raise
-        except (aiocoap.error.Error, OSError) as err:
-            _LOGGER.warning("Log observe failed for %s: %s", self.host, err)
+                # loop back to resubscribe
+            except asyncio.CancelledError:
+                _LOGGER.debug("Log observe task cancelled for %s", self.host)
+                raise
+            except (aiocoap.error.Error, OSError) as err:
+                _LOGGER.warning("Log observe failed for %s: %s", self.host, err)
+                return  # don't retry on error for logs
 
     def _forward_logs(self, device_name: str, payload: bytes) -> None:
         """Decode a CBOR log notification and emit each entry to the HA logger."""
