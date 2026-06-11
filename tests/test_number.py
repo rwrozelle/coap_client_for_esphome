@@ -5,6 +5,7 @@ from unittest.mock import patch
 from coap_client_for_esphome.coordinator import CoapResource
 from coap_client_for_esphome.entity import CoapEntity
 from coap_client_for_esphome.number import CoapNumber
+from homeassistant.components.number import NumberMode
 
 
 def _make_number(resource: CoapResource) -> CoapNumber:
@@ -36,6 +37,12 @@ def test_number_falls_back_to_defaults_when_none():
     assert nb._attr_native_min_value == 0.0
     assert nb._attr_native_max_value == 100.0
     assert nb._attr_native_step == 1.0
+
+
+def test_number_mode_is_auto():
+    resource = CoapResource(path="fp/6/g/1", name="brightness")
+    nb = _make_number(resource)
+    assert nb._attr_mode == NumberMode.AUTO
 
 
 def test_number_partial_range_overrides_only_set_fields():

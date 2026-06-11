@@ -36,7 +36,7 @@ class CoapNumber(CoapEntity, NumberEntity):
     _attr_native_min_value = 0.0
     _attr_native_max_value = 100.0
     _attr_native_step = 1.0
-    _attr_mode = NumberMode.BOX
+    _attr_mode = NumberMode.AUTO
     _locked_until: float = 0.0
 
     def __init__(
