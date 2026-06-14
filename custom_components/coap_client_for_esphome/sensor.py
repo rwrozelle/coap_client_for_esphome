@@ -50,6 +50,8 @@ class CoapSensor(CoapEntity, SensorEntity):
         if resource.device_class:
             with contextlib.suppress(ValueError):
                 self._attr_device_class = SensorDeviceClass(resource.device_class)
+        if resource.accuracy_decimals is not None:
+            self._attr_suggested_display_precision = resource.accuracy_decimals
 
     async def async_added_to_hass(self) -> None:
         """Register state subscription."""

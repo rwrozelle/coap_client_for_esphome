@@ -200,6 +200,24 @@ def test_parse_link_format_number_partial_range():
     assert r.step == 1.0
 
 
+def test_parse_link_format_sensor_accuracy_decimals():
+    text = '</fp/1>;rt="esphome.sensor";obs;oid="humidity";dc="humidity";ad=1'
+    r = _parse_link_format(text)[0]
+    assert r.accuracy_decimals == 1
+
+
+def test_parse_link_format_sensor_accuracy_decimals_zero():
+    text = '</fp/1>;rt="esphome.sensor";obs;oid="co2";ad=0'
+    r = _parse_link_format(text)[0]
+    assert r.accuracy_decimals == 0
+
+
+def test_parse_link_format_sensor_no_accuracy_decimals():
+    text = '</fp/1>;rt="esphome.sensor";obs;oid="humidity";dc="humidity"'
+    r = _parse_link_format(text)[0]
+    assert r.accuracy_decimals is None
+
+
 def test_parse_cbor_state_integer_senml_v():
     # Lock state is encoded as CBOR uint — _parse_cbor_state coerces SENML_V to float.
     # int() still works correctly for lock state mapping (int(1.0) == 1).

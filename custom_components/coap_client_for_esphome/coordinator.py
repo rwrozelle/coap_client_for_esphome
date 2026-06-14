@@ -192,6 +192,7 @@ class CoapResource:
     name: str = ""
     unit: str = ""
     device_class: str = ""
+    accuracy_decimals: int | None = None
     device_index: int = 0
     stop_path: str = ""
     min_value: float | None = None
@@ -1173,6 +1174,11 @@ def _parse_link_format(text: str) -> list[CoapResource]:
                         resource.unit = val
                     case "dc":
                         resource.device_class = val
+                    case "ad":
+                        try:
+                            resource.accuracy_decimals = int(val)
+                        except ValueError:
+                            pass
                     case "dv":
                         try:
                             resource.device_index = int(val)
