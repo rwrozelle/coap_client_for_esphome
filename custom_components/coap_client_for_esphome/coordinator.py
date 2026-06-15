@@ -420,7 +420,8 @@ class CoapCoordinator:
         response = await asyncio.wait_for(
             self._context.request(
                 aiocoap.Message(
-                    transport_tuning=aiocoap.Unreliable, code=aiocoap.GET, uri=self._uri(".well-known/core")
+                    transport_tuning=aiocoap.Reliable, code=aiocoap.GET, uri=self._uri(".well-known/core"),
+                    block2=aiocoap.optiontypes.BlockOption.BlockwiseTuple(0, False, 6),
                 )
             ).response,
             timeout=self.device_info.ping_timeout_s,
