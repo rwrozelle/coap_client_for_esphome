@@ -449,14 +449,14 @@ class CoapCoordinator:
             self.host,
             [r.path for r in observable],
         )
-        for resource in observable:
+        for index, resource in enumerate(observable):
             if resource.resource_type == RT_LOG:
                 if not self._subscribe_logs:
                     continue
                 coro = self._async_observe_logs(resource)
                 name = f"coap_observe_logs_{self.host}"
             else:
-                coro = self._async_observe(resource)
+                coro = self._async_observe(resource, stagger_s=index * 0.05)
                 name = f"coap_observe_{self.host}_{resource.path}"
             task = self.hass.async_create_background_task(coro, name=name)
             self._observe_tasks.append(task)
@@ -491,13 +491,15 @@ class CoapCoordinator:
         self._observe_tasks.clear()
         self._start_observe_tasks()
 
-    async def _async_observe(self, resource: CoapResource) -> None:
+    async def _async_observe(self, resource: CoapResource, stagger_s: float = 0.0) -> None:
         """Observe a resource with periodic resubscription and retry on failure.
 
         Planned resubscriptions (interval elapsed) restart the retry budget immediately.
         Unplanned exits consume the retry budget with exponential backoff; exhausting
         it marks the coordinator unavailable.
         """
+        if stagger_s > 0.0:
+            await asyncio.sleep(stagger_s)
         max_retries = self.device_info.observe_retry
         while True:
             delay = self._observe_retry_initial_delay_s
