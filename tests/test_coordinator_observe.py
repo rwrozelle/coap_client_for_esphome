@@ -1,6 +1,7 @@
 """Tests for observation, notification delivery, availability, and ping loop."""
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 
@@ -206,7 +207,7 @@ async def test_initial_value_delivered_valve(lock_valve_coordinator, lock_valve_
     lock_valve_server.set_value("garden_valve", 0.5)
     await lock_valve_coordinator.async_setup()
     lock_valve_coordinator.async_start_observations()
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.5)  # valve is index 4; stagger=0.2s, needs extra headroom
     state = lock_valve_coordinator.get_state("garden_valve")
     assert state is not None
     assert state["value"] == pytest.approx(0.5)
@@ -277,3 +278,54 @@ async def test_valve_subscribe_callback_fires(lock_valve_coordinator, lock_valve
     lock_valve_server.set_value("garden_valve", 0.75)
     await asyncio.sleep(0.2)
     assert any(abs(v - 0.75) < 0.01 for v in received)
+
+
+# ---------------------------------------------------------------------------
+# Subscribe jitter
+# ---------------------------------------------------------------------------
+
+
+async def test_start_observe_tasks_calls_subscribe_jitter(coordinator, mock_server):
+    """_start_observe_tasks calls _subscribe_jitter_s() once per invocation."""
+    await coordinator.async_setup()
+    with patch.object(coordinator, "_subscribe_jitter_s", return_value=0.0) as mock_jitter:
+        coordinator._start_observe_tasks()
+    mock_jitter.assert_called_once_with()
+
+
+async def test_observe_stagger_includes_jitter(coordinator, mock_server):
+    """Each entity's stagger_s is jitter_base + index * 0.05."""
+    await coordinator.async_setup()
+    staggers: list[float] = []
+
+    async def _capturing_observe(resource, stagger_s: float = 0.0):
+        staggers.append(stagger_s)
+
+    with patch.object(coordinator, "_subscribe_jitter_s", return_value=0.3), \
+         patch.object(coordinator, "_async_observe", side_effect=_capturing_observe):
+        coordinator._start_observe_tasks()
+        await asyncio.sleep(0)
+
+    # DEFAULT_LINK_FORMAT has 3 non-log observable resources (temperature, motion, relay)
+    # at enumeration indices 0, 1, 2 — logs are index 3 but skipped when subscribe_logs=False
+    assert len(staggers) == 3
+    assert staggers[0] == pytest.approx(0.30)
+    assert staggers[1] == pytest.approx(0.35)
+    assert staggers[2] == pytest.approx(0.40)
+
+
+async def test_resubscribe_also_jitters(coordinator, mock_server):
+    """async_resubscribe draws a fresh jitter so simultaneous reconnects stay spread."""
+    await _start_and_settle(coordinator)
+    staggers: list[float] = []
+
+    async def _capturing_observe(resource, stagger_s: float = 0.0):
+        staggers.append(stagger_s)
+
+    with patch.object(coordinator, "_subscribe_jitter_s", return_value=0.25), \
+         patch.object(coordinator, "_async_observe", side_effect=_capturing_observe):
+        coordinator.async_resubscribe()
+        await asyncio.sleep(0)
+
+    assert len(staggers) == 3
+    assert staggers[0] == pytest.approx(0.25)

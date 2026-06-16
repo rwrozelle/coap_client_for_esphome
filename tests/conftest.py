@@ -9,7 +9,7 @@ import socket
 import sys
 import types
 from enum import Enum
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import aiocoap
 import aiocoap.resource as resource
@@ -756,6 +756,19 @@ async def oscore_required_server():
 @pytest.fixture
 def hass():
     return MockHass()
+
+
+@pytest.fixture(autouse=True)
+def suppress_subscribe_jitter():
+    """Pin _subscribe_jitter_s to 0.0 so tests don't need to account for up to 0.5s of jitter.
+
+    Tests that specifically verify jitter behaviour override this with their own patch.
+    """
+    with patch(
+        "coap_client_for_esphome.coordinator.CoapCoordinator._subscribe_jitter_s",
+        return_value=0.0,
+    ):
+        yield
 
 
 @pytest.fixture

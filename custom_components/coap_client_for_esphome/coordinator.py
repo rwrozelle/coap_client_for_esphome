@@ -439,6 +439,14 @@ class CoapCoordinator:
             [r.path for r in self.resources],
         )
 
+    def _subscribe_jitter_s(self) -> float:
+        """Random delay added to all observe task staggers on each subscribe burst.
+
+        Isolated as a method so tests can patch it without affecting other
+        random.uniform calls (e.g. resubscription interval jitter).
+        """
+        return random.uniform(0.0, 0.5)
+
     @callback
     def _start_observe_tasks(self) -> None:
         """Create and register observe tasks for all observable resources."""
@@ -449,6 +457,7 @@ class CoapCoordinator:
             self.host,
             [r.path for r in observable],
         )
+        jitter_s = self._subscribe_jitter_s()
         for index, resource in enumerate(observable):
             if resource.resource_type == RT_LOG:
                 if not self._subscribe_logs:
@@ -456,7 +465,7 @@ class CoapCoordinator:
                 coro = self._async_observe_logs(resource)
                 name = f"coap_observe_logs_{self.host}"
             else:
-                coro = self._async_observe(resource, stagger_s=index * 0.05)
+                coro = self._async_observe(resource, stagger_s=jitter_s + index * 0.05)
                 name = f"coap_observe_{self.host}_{resource.path}"
             task = self.hass.async_create_background_task(coro, name=name)
             self._observe_tasks.append(task)
