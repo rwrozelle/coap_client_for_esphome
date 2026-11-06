@@ -7,7 +7,9 @@
 #   - pre-commit (wired to git hooks on completion)
 #
 # Run once after cloning, or to rebuild after deleting venv/.
-# Requires ~/dev/core (HA core repo) for hassfest to work at commit time.
+# Requires ~/dev/core (HA core repo) for hassfest to work at commit time, e.g.
+#   git clone --depth 1 --branch <latest release> https://github.com/home-assistant/core.git ~/dev/core
+# Re-run this script after moving ~/dev/core to another release.
 
 set -euo pipefail
 
@@ -39,6 +41,19 @@ echo "==> Installing validation and pre-commit packages..."
 "${UV}" pip install \
     --python "${REPO_ROOT}/venv/bin/python" \
     homeassistant tqdm ruff awesomeversion voluptuous pre-commit
+
+# Since 2026.11, HA core keeps hassfest's shared code in packages/hassfest and refuses to run with a
+# ruff older than the one it pins, so install both from the core checkout
+HA_CORE="${HOME}/dev/core"
+if [ -d "${HA_CORE}/packages/hassfest" ]; then
+    echo "==> Installing hassfest from ${HA_CORE}..."
+    RUFF_PIN="$(grep -E '^ruff==' "${HA_CORE}/requirements_test_pre_commit.txt" || true)"
+    "${UV}" pip install \
+        --python "${REPO_ROOT}/venv/bin/python" \
+        -e "${HA_CORE}/packages/hassfest" ${RUFF_PIN:+"${RUFF_PIN}"}
+elif [ ! -d "${HA_CORE}" ]; then
+    echo "    ${HA_CORE} not found: clone HA core there for the hassfest hook"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Wire git hooks
