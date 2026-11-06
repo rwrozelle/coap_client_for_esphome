@@ -36,10 +36,9 @@ wifi:
   # ... your WiFi credentials
 
 coap_server:
-  transport: network
 ```
 
-`transport` defaults to `openthread` when the `openthread` component is configured, otherwise to `network`.
+The transport is OpenThread when the `openthread` component is configured, otherwise the network.
 
 ### Full coap_server options
 
@@ -53,7 +52,6 @@ The client sends non-confirmable (NON) observe requests. Liveness is tracked via
 coap_server:
   port: 5683                        # UDP port (default 5683)
   max_connections: 1                # Max simultaneous HA connections (default 1)
-  transport: network                # openthread or network (default: openthread if configured)
   subscription_confirm: false       # NON observe mode (default)
   server_ping_interval: 60s         # How often the device pings HA (default 60s, min 20s)
   server_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5); floor of 1 second
@@ -77,7 +75,6 @@ The client sends confirmable (CON) observe requests. The server acknowledges eac
 coap_server:
   port: 5683                        # UDP port (default 5683)
   max_connections: 1                # Max simultaneous HA connections (default 1)
-  transport: network                # openthread or network (default: openthread if configured)
   subscription_confirm: true        # CON observe mode
   observe_retry: 1                  # Re-subscribe attempts after stream ends (default 1, max 10)
   oscore:                           # Optional OSCORE encryption
