@@ -141,7 +141,7 @@ OSCORE uses two independent sequence number counters to prevent replayed message
 | Counter | Incremented by | Checked by | Persisted |
 |---|---|---|---|
 | **Client sender seq** | HA on every outbound request | Device's receiver window | HA config entry (threshold checkpoints every 1024) |
-| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device: NVS on ESP32, a `<name>.coap_oscore` file on host (threshold checkpoints every 1024) |
+| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device preferences, written to storage at once: NVS on ESP32, `<name>.prefs` on host (threshold checkpoints every 1024) |
 
 Both receiver windows are **in-memory only** — they reset to empty whenever their owner restarts.
 
