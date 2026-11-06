@@ -1,6 +1,6 @@
 # CoAP Client for ESPHome
 
-A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/esphome/tree/coap_server) external component. Communication uses the CoAP protocol over UDP, with state updates delivered via CoAP Observe (push) — no polling.
+A Home Assistant custom integration that connects to ESPHome devices running the `coap_server` component from the [`coap_server` branch](https://github.com/rwrozelle/esphome/tree/coap_server) of ESPHome. Communication uses the CoAP protocol over UDP, with state updates delivered via CoAP Observe (push) — no polling.
 
 The `coap_server` component has two transports: Thread (OpenThread) and the device's IP network (WiFi, Ethernet, or the ESPHome host platform). The HA integration only needs an IP address it can reach — the transport is a firmware-side concern. A Thread device is reachable via a Thread border router that advertises a routed prefix, or directly if the HA host is on the same Thread network. A WiFi or Ethernet device is reached at its IPv6 or IPv4 address.
 
@@ -8,17 +8,33 @@ This integration was vibe coded using Claude.
 
 ## Prerequisites
 
-Your ESPHome device must be configured with the `coap_server` external component and reachable from the Home Assistant host via an IP address. With the Thread transport, a Thread border router with a routed prefix is the typical setup. With the network transport, the device only needs to be on a network HA can reach.
+Your ESPHome device must be built with ESPHome from the `coap_server` branch and reachable from the Home Assistant host via an IP address. With the Thread transport, a Thread border router with a routed prefix is the typical setup. With the network transport, the device only needs to be on a network HA can reach.
+
+### Installing ESPHome from the coap_server branch
+
+The component needs a change to ESPHome core (writing one saved value to flash right away), and `external_components` can only replace components, not the core. Build the firmware with ESPHome installed from the branch:
+
+```bash
+# Clone the repository:
+git clone https://github.com/esphome/esphome
+cd esphome
+
+# Checkout the branch:
+git fetch https://github.com/rwrozelle/esphome coap_server:coap_server
+git checkout coap_server
+
+# Install the development version:
+script/setup
+
+# Activate the development version:
+source venv/bin/activate
+```
 
 ### Minimum ESPHome configuration
 
 Over Thread:
 
 ```yaml
-external_components:
-  - source: github://rwrozelle/esphome@coap_server
-    components: [coap_server, mdns]
-
 openthread:
   # ... your Thread network credentials
 
@@ -28,10 +44,6 @@ coap_server:
 Over WiFi (or Ethernet):
 
 ```yaml
-external_components:
-  - source: github://rwrozelle/esphome@coap_server
-    components: [coap_server, mdns]
-
 wifi:
   # ... your WiFi credentials
 
