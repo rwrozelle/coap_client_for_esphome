@@ -1,16 +1,18 @@
 # CoAP Client for ESPHome
 
-A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/esphome/tree/coap_server) external component. Communication uses the CoAP protocol over IPv6, with state updates delivered via CoAP Observe (push) — no polling.
+A Home Assistant custom integration that connects to ESPHome devices running the [`coap_server`](https://github.com/rwrozelle/esphome/tree/coap_server) external component. Communication uses the CoAP protocol over UDP, with state updates delivered via CoAP Observe (push) — no polling.
 
-The `coap_server` component currently runs over Thread (OpenThread). The HA integration only needs a routable IPv6 address to reach the device — Thread is a firmware-side transport concern. Devices are reachable via a Thread border router that advertises a routed prefix, or directly if the HA host is on the same Thread network.
+The `coap_server` component has two transports: Thread (OpenThread) and the device's IP network (WiFi, Ethernet, or the ESPHome host platform). The HA integration only needs an IP address it can reach — the transport is a firmware-side concern. A Thread device is reachable via a Thread border router that advertises a routed prefix, or directly if the HA host is on the same Thread network. A WiFi or Ethernet device is reached at its IPv6 or IPv4 address.
 
 This integration was vibe coded using Claude.
 
 ## Prerequisites
 
-Your ESPHome device must be configured with the `coap_server` external component and reachable from the Home Assistant host via an IPv6 address. The current `coap_server` implementation uses Thread (OpenThread) as its network transport, so a Thread border router with a routed prefix is the typical setup.
+Your ESPHome device must be configured with the `coap_server` external component and reachable from the Home Assistant host via an IP address. With the Thread transport, a Thread border router with a routed prefix is the typical setup. With the network transport, the device only needs to be on a network HA can reach.
 
 ### Minimum ESPHome configuration
+
+Over Thread:
 
 ```yaml
 external_components:
@@ -22,6 +24,22 @@ openthread:
 
 coap_server:
 ```
+
+Over WiFi (or Ethernet):
+
+```yaml
+external_components:
+  - source: github://rwrozelle/esphome@coap_server
+    components: [coap_server, mdns]
+
+wifi:
+  # ... your WiFi credentials
+
+coap_server:
+  transport: network
+```
+
+`transport` defaults to `openthread` when the `openthread` component is configured, otherwise to `network`.
 
 ### Full coap_server options
 
@@ -35,6 +53,7 @@ The client sends non-confirmable (NON) observe requests. Liveness is tracked via
 coap_server:
   port: 5683                        # UDP port (default 5683)
   max_connections: 1                # Max simultaneous HA connections (default 1)
+  transport: network                # openthread or network (default: openthread if configured)
   subscription_confirm: false       # NON observe mode (default)
   server_ping_interval: 60s         # How often the device pings HA (default 60s, min 20s)
   server_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5); floor of 1 second
@@ -42,7 +61,7 @@ coap_server:
   client_ping_interval: 60s         # How often HA pings the device (default 60s)
   client_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5); floor of 1 second
   client_ping_retry: 1              # Consecutive missed pings before reconnect (default 1)
-  oscore:                           # Optional OSCORE encryption
+  oscore:                           # Optional OSCORE encryption (ESP32 and host only)
     master_secret: "deadbeef..."
     master_salt: ""                 # Optional
     sender_id: "01"                 # Device's sender ID
@@ -58,6 +77,7 @@ The client sends confirmable (CON) observe requests. The server acknowledges eac
 coap_server:
   port: 5683                        # UDP port (default 5683)
   max_connections: 1                # Max simultaneous HA connections (default 1)
+  transport: network                # openthread or network (default: openthread if configured)
   subscription_confirm: true        # CON observe mode
   observe_retry: 1                  # Re-subscribe attempts after stream ends (default 1, max 10)
   oscore:                           # Optional OSCORE encryption
@@ -97,11 +117,11 @@ The integration listens for `_esphome-coap-server._udp.local.` mDNS announcement
 
 1. Go to **Settings → Devices & Services → Add Integration**.
 2. Search for **CoAP Client for ESPHome**.
-3. Enter the device's IPv6 address and port (default `5683`).
+3. Enter the device's IP address (IPv6 or IPv4) and port (default `5683`).
 
 ### OSCORE encryption
 
-The integration automatically detects whether OSCORE is required by reading the `oscore` field from the device's `/info` endpoint. When `oscore:` is present in the ESPHome `coap_server` config, the device advertises `"oscore": true` and the setup flow adds a credential step. If `oscore:` is absent, setup completes without asking for credentials.
+OSCORE is available on ESP32 devices and on the ESPHome host platform. The integration automatically detects whether OSCORE is required by reading the `oscore` field from the device's `/info` endpoint. When `oscore:` is present in the ESPHome `coap_server` config, the device advertises `"oscore": true` and the setup flow adds a credential step. If `oscore:` is absent, setup completes without asking for credentials.
 
 If the device requires OSCORE, a second step appears after the initial connection test. Enter the hex credentials from your ESPHome `coap_server` config:
 
@@ -124,7 +144,7 @@ OSCORE uses two independent sequence number counters to prevent replayed message
 | Counter | Incremented by | Checked by | Persisted |
 |---|---|---|---|
 | **Client sender seq** | HA on every outbound request | Device's receiver window | HA config entry (threshold checkpoints every 1024) |
-| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device NVS (threshold checkpoints every 1024) |
+| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device: NVS on ESP32, a `<name>.coap_oscore` file on host (threshold checkpoints every 1024) |
 
 Both receiver windows are **in-memory only** — they reset to empty whenever their owner restarts.
 
@@ -140,11 +160,12 @@ This means an HA restart automatically resolves any client-side replay rejection
 
 | Event | Effect on HA | Problem? |
 |---|---|---|
-| Device reboots (NVS intact) | Device sender seq continues from NVS; HA's fresh window on next HA restart accepts any seq | None |
-| Device reflashed (NVS cleared), HA also restarted | HA receiver window is empty → accepts device seq starting at 0 | None |
-| Device reflashed (NVS cleared), **HA still running** | HA receiver window still holds old seq values → **rejects device seq 0 as replay** | **Use Reconfigure → Reset replay window** |
+| Device reboots or is reflashed with its stored sequence number intact | Device sender seq continues from storage; nothing to do | None |
+| Device's stored sequence number erased (flash erased, or the host file deleted) | Device restarts its sequence at 0 **with the same keys** | **Generate new OSCORE keys** |
 
-The only scenario requiring action is a device reflash while HA keeps running. In that case, use **Reconfigure → Reset replay window** to clear HA's in-memory receiver window.
+> **Erasing the device's stored sequence number is a security problem, not just a replay-window problem.** With the same keys, the device reuses sequence numbers it already sent, which means it reuses AES-CCM nonces. Whenever that value is erased, generate new OSCORE keys, flash them to the device, and enter them in HA via **Reconfigure** — the reload with new credentials also gives HA a fresh replay window.
+
+**Reconfigure → Reset replay window** only clears HA's in-memory receiver window. It is useful when HA rejects valid notifications, but it does not make reused nonces safe.
 
 ### Updating OSCORE credentials
 
@@ -193,12 +214,14 @@ The integration reads the following RFC 6690 link-format attributes from each re
 |---|---|---|
 | `rt=` | Resource type (e.g. `esphome.sensor`) | Determines the HA platform |
 | `obs` | Observable flag | Whether to start a CoAP Observe stream |
-| `oid=` | Object ID / entity name | Unique identifier and display name |
-| `title=` | Human-readable title | Fallback name when `oid=` is absent |
+| `oid=` | Object ID hash | Key for the entity's unique ID and its state |
+| `title=` | Entity name | Display name (the resource path is used when absent) |
 | `uom=` | Unit of measurement | Sensor unit (e.g. `°C`, `%`) |
 | `dc=` | Device class | HA device class (e.g. `temperature`, `motion`) |
+| `ad=` | Accuracy decimals | Sensor display precision |
+| `min=`, `max=`, `step=` | Number range | Number slider range and step |
 | `dv=` | Device index | Sub-device assignment (1-based) |
-| `stp=` | Stop path | Alternative POST path for valve stop action |
+| `stp=` | Stop path | Valve stop path; current firmware does not send it, so `/fp/{N}/g/2` is used |
 | `ct=` | Content type | CBOR = 60 (default) |
 
 Unknown attributes are silently ignored, so firmware can include additional attributes for future use without breaking the integration.
@@ -280,19 +303,19 @@ Use this button when an entity appears stale and you do not want to wait for the
 ## Troubleshooting
 
 **Device not discovered automatically**
-- Confirm the Thread network is operational and the device has joined it.
+- Thread: confirm the Thread network is operational and the device has joined it. WiFi/Ethernet: confirm the device is on a network the HA host can reach, and that mDNS crosses between them.
 - Verify the device is advertising `_esphome-coap-server._udp.local.` — check with `avahi-browse -r _esphome-coap-server._udp` or a mDNS browser.
-- Try adding the device manually using its IPv6 address.
+- Try adding the device manually using its IP address.
 
 **Cannot connect / setup fails**
-- Ping the device's IPv6 address from the HA host: `ping6 <device-ipv6>`.
+- Ping the device from the HA host: `ping <device-ip>` (IPv4 or IPv6).
 - Confirm `port` in your ESPHome config matches what you entered (default `5683`).
 - If OSCORE is enabled on the device, ensure you enter credentials — the integration detects the requirement from the `/info` endpoint.
 
 **Entities become unavailable**
 - Check the HA logs for ping timeout or backoff messages under `custom_components.coap_client_for_esphome`.
 - The device may have rebooted; the integration will reconnect automatically.
-- Verify the Thread network has not partitioned and the border router is routing the device's prefix.
+- Thread: verify the Thread network has not partitioned and the border router is routing the device's prefix.
 
 **OSCORE errors**
 - Double-check that Sender ID and Recipient ID are **swapped** relative to the ESPHome `coap_server` config: HA's Sender ID = device's `recipient_id`, and HA's Recipient ID = device's `sender_id`.
