@@ -50,7 +50,7 @@ wifi:
 coap_server:
 ```
 
-The transport is OpenThread when the `openthread` component is configured, otherwise the network.
+The transport is OpenThread when the `openthread` component is configured, otherwise the network. Thread works on ESP32 boards with an IEEE 802.15.4 radio (ESP32-C5, ESP32-C6, ESP32-H2) and on nRF52840 boards.
 
 ### Full coap_server options
 
@@ -71,7 +71,7 @@ coap_server:
   client_ping_interval: 60s         # How often HA pings the device (default 60s)
   client_ping_timeout_ratio: 2.5    # Timeout = interval × ratio (default 2.5); floor of 1 second
   client_ping_retry: 1              # Consecutive missed pings before reconnect (default 1)
-  oscore:                           # Optional OSCORE encryption (ESP32 and host only)
+  oscore:                           # Optional OSCORE encryption (ESP32, nRF52 and host)
     master_secret: "deadbeef..."
     master_salt: ""                 # Optional
     sender_id: "01"                 # Device's sender ID
@@ -130,7 +130,7 @@ The integration listens for `_esphome-coap-server._udp.local.` mDNS announcement
 
 ### OSCORE encryption
 
-OSCORE is available on ESP32 devices and on the ESPHome host platform. The integration automatically detects whether OSCORE is required by reading the `oscore` field from the device's `/info` endpoint. When `oscore:` is present in the ESPHome `coap_server` config, the device advertises `"oscore": true` and the setup flow adds a credential step. If `oscore:` is absent, setup completes without asking for credentials.
+OSCORE is available on ESP32 and nRF52 devices and on the ESPHome host platform. The integration automatically detects whether OSCORE is required by reading the `oscore` field from the device's `/info` endpoint. When `oscore:` is present in the ESPHome `coap_server` config, the device advertises `"oscore": true` and the setup flow adds a credential step. If `oscore:` is absent, setup completes without asking for credentials.
 
 If the device requires OSCORE, a second step appears after the initial connection test. Enter the hex credentials from your ESPHome `coap_server` config:
 
@@ -153,7 +153,7 @@ OSCORE uses two independent sequence number counters to prevent replayed message
 | Counter | Incremented by | Checked by | Persisted |
 |---|---|---|---|
 | **Client sender seq** | HA on every outbound request | Device's receiver window | HA config entry (threshold checkpoints every 1024) |
-| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device preferences, written to storage at once: NVS on ESP32, `<name>.prefs` on host (threshold checkpoints every 1024) |
+| **Device sender seq** | Device on every outbound notification | HA's receiver window | Device preferences, written to storage at once: NVS on ESP32, Zephyr settings on nRF52, `<name>.prefs` on host (threshold checkpoints every 1024) |
 
 Both receiver windows are **in-memory only** — they reset to empty whenever their owner restarts.
 
